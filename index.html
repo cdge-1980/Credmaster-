@@ -29,6 +29,11 @@
     p { line-height: 1.5; }
     .muted { color: #55657a; font-size: 14px; }
     .danger { color: #b02036; font-weight: 750; }
+    #overdue-alert { margin-bottom: 15px; padding: 14px 16px; border: 2px solid #b02036; border-radius: 12px; background: #fff0f1; color: #82192b; }
+    #overdue-alert h2 { margin: 0 0 8px; font-size: 1.15rem; }
+    #overdue-alert ul { margin: 0; padding-inline-start: 22px; line-height: 1.5; overflow-wrap: anywhere; }
+    #overdue-alert li + li { margin-top: 5px; }
+    #overdue-alert mark { background: #ffd6dc; color: inherit; font-weight: 750; }
     .good { color: #146443; font-weight: 700; }
     .actions { display: flex; gap: 7px; flex-wrap: wrap; }
     .actions button { flex: 1; }
@@ -64,6 +69,10 @@
       <button type="button" data-tab="relatorios">Relatórios</button>
       <button type="button" data-tab="dados">Dados</button>
     </nav>
+    <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
+      <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
+      <ul id="overdue-list"></ul>
+    </section>
     <p id="status" role="status"></p>
     <div id="view"></div>
   </main>
@@ -87,6 +96,8 @@
     const main = document.querySelector("main");
     const nav = main.querySelector("nav");
     const logout = document.querySelector("#logout");
+    const overdueAlert = document.querySelector("#overdue-alert");
+    const overdueList = document.querySelector("#overdue-list");
     const status = document.querySelector("#status");
     const view = document.querySelector("#view");
     const emptyState = () => ({ revision: 0, clientes: [], emprestimos: [], pagamentos: [] });
@@ -166,7 +177,21 @@
         || Boolean(digits && /^[\d.\-/\s]+$/.test(query) && document.includes(digits));
     }
 
+    function renderOverdueAlert() {
+      const day = today();
+      const overdue = (records?.emprestimos ?? [])
+        .filter(loan => active(loan) && loan.vencimento < day)
+        .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+      overdueAlert.hidden = overdue.length === 0;
+      overdueList.innerHTML = overdue.map(loan => {
+        const days = lateDays(loan.vencimento, day);
+        const duration = days === 1 ? "1 dia" : `${days} dias`;
+        return `<li><mark>${escapeHtml(clientName(loan.cid))}</mark> · nº ${escapeHtml(loanNumber(loan.id))} · ${duration} de atraso</li>`;
+      }).join("");
+    }
+
     function render() {
+      renderOverdueAlert();
       view.inert = saving;
       if (!records) {
         view.replaceChildren();
@@ -681,6 +706,10 @@
       currentTab = button.dataset.tab;
       view.replaceChildren();
       render();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) renderOverdueAlert();
     });
 
     try {
