@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CredMaster</title>
+  <link rel="icon" type="image/png" href="./COFRE.png">
+<link rel="apple-touch-icon" href="./COFRE.png">
+<meta name="theme-color" content="#173568">
+  <style>
+    :root { font-family: system-ui, Arial, sans-serif; background: #f2f5fa; color: #15223a; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    header { background: #173568; color: white; padding: 22px 18px; }
+    h1 { margin: 0; font-size: 26px; }
+    small { opacity: .85; }
+    main, #login { max-width: 680px; margin: auto; padding: 15px; }
+    #login { max-width: 420px; margin-top: 18px; }
+    nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 15px; }
+    nav button { font-size: 13px; padding: 11px 4px; }
+    button { border: 0; border-radius: 10px; padding: 12px; background: #173568; color: white; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    .secondary { background: #e7edf7; color: #173568; }
+    .green { background: #16744f; }
+    .red { background: #a52336; }
+    .card { background: white; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 10px #142b4d12; }
+    .card h2 { font-size: 1.2rem; }
+    label { display: block; font-weight: 650; margin: 10px 0 5px; }
+    input, select { width: 100%; padding: 12px; border: 1px solid #c7d0df; border-radius: 9px; font-size: 16px; }
+    form button { margin-top: 12px; }
+    p { line-height: 1.5; }
+    .muted { color: #55657a; font-size: 14px; }
+    .danger { color: #b02036; font-weight: 750; }
+    #overdue-alert { margin-bottom: 15px; padding: 14px 16px; border: 2px solid #b02036; border-radius: 12px; background: #fff0f1; color: #82192b; }
+    #overdue-alert h2 { margin: 0 0 8px; font-size: 1.15rem; }
+    #overdue-alert ul { margin: 0; padding-inline-start: 22px; line-height: 1.5; overflow-wrap: anywhere; }
+    #overdue-alert li + li { margin-top: 5px; }
+    #overdue-alert mark { background: #ffd6dc; color: inherit; font-weight: 750; }
+    .good { color: #146443; font-weight: 700; }
+    .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .actions button { flex: 1; }
+    #status { margin: 0 0 12px; }
+    #logout { margin-bottom: 15px; }
+    article + article { border-top: 1px solid #e8edf4; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CredMaster</h1>
+    <small>Gestão de empréstimos e cobranças</small>
+  </header>
+  <section id="login">
+    <form id="login-form" class="card">
+      <h2>Entrar no CredMaster</h2>
+      <label for="email">E-mail</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="password">Senha</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button id="login-button" disabled>Entrar</button>
+      <button id="reset-password" class="secondary" type="button" disabled>Esqueci minha senha</button>
+      <p id="login-message" role="status">Carregando login…</p>
+    </form>
+  </section>
+  <main hidden>
+    <button id="logout" class="secondary" type="button">Sair</button>
+    <nav aria-label="Seções do CredMaster">
+      <button type="button" data-tab="novo">＋ Novo empréstimo</button>
+      <button type="button" data-tab="clientes">Clientes</button>
+      <button type="button" data-tab="emprestimos">Empréstimos</button>
+      <button type="button" data-tab="cobrancas">Cobranças</button>
+      <button type="button" data-tab="relatorios">Relatórios</button>
+      <button type="button" data-tab="dados">Dados</button>
+    </nav>
+    <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
+      <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
+      <ul id="overdue-list"></ul>
+    </section>
+    <p id="status" role="status"></p>
+    <div id="view"></div>
+  </main>
+  <noscript>Ative o JavaScript para entrar no CredMaster.</noscript>
+  <script type="module">
+    const sdk = "https://www.gstatic.com/firebasejs/12.11.0/";
+    const ownerUid = "EVKdQFXbYNXprvnhX6zyDRZOemE3";
+    const config = {
+      apiKey: "AIzaSyBABu6lN9Mwr5gizgXEA5WCMkXgcPD0YZY",
+      authDomain: "credmaster-476d5.firebaseapp.com",
+      projectId: "credmaster-476d5",
+      appId: "1:115740048120:web:542f876e634cff2861990d"
+    };
+
+    const login = document.querySelector("#login");
+    const email = document.querySelector("#email");
+    const password = document.querySelector("#password");
+    const loginButton = document.querySelector("#login-button");
+    const resetButton = document.querySelector("#reset-password");
+    const loginMessage = document.querySelector("#login-message");
+    const main = document.querySelector("main");
+    const nav = main.querySelector("nav");
+    const logout = document.querySelector("#logout");
+    const overdueAlert = document.querySelector("#overdue-alert");
+    const overdueList = document.querySelector("#overdue-list");
+    const status = document.querySelector("#status");
+    const view = document.querySelector("#view");
+    const emptyState = () => ({ revision: 0, clientes: [], emprestimos: [], pagamentos: [] });
+    const formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    const money = cents => formatter.format(cents / 100);
+    const localDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" });
+    const today = () => localDate.format();
+    const displayDate = iso => iso.split("-").reverse().join("/");
+    const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[character]);
+    const loanNumber = id => String(id).padStart(3, "0");
+    const card = (title, body) => `<section class="card"><h2>${title}</h2>${body}</section>`;
+    const action = (label, name, id, style = "secondary") =>
+      `<button type="button" class="${style}" data-action="${name}" data-id="${id}">${label}</button>`;
+    const active = loan => !loan.quitado;
+    const interest = loan => Math.round(loan.principal * loan.taxa / 10_000);
+    const lateDays = (due, day) => Math.max(0, (Date.parse(day) - Date.parse(due)) / 86_400_000);
+    const penalty = (due, day) => lateDays(due, day) * 1000;
+    const sum = (items, field) => items.reduce((total, item) => total + item[field], 0);
+    const nextId = items => items.reduce((max, item) => Math.max(max, item.id), 0) + 1;
+    const documentTypes = { identidade: "Foto do documento", endereco: "Comprovante de endereço", renda: "Contracheque" };
+    const partSize = 512 * 1024;
+    const maxParts = 6;
+
+    let auth;
+    let cloud;
+    let session;
+    let records;
+    let currentTab = "novo";
+    let saving = false;
+    let clientFilter = "";
+    let reportClient = 0;
+    let paymentLoan = 0;
+    let activeClientEdit = 0;
+
+    function dueDate(start, monthOffset) {
+      const [year, month, day] = start.split("-").map(Number);
+      const first = new Date(0);
+      first.setUTCFullYear(year, month - 1 + monthOffset, 1);
+      const end = new Date(first);
+      end.setUTCMonth(first.getUTCMonth() + 1, 0);
+      const lastDay = end.getUTCDate();
+      first.setUTCDate(Math.min(day, lastDay));
+      return first.toISOString().slice(0, 10);
+    }
+
+    function setStatus(message, error = false) {
+      status.textContent = message;
+      status.classList.toggle("danger", error);
+    }
+
+    function clientName(id) {
+      return records.clientes.find(client => client.id === id)?.nome ?? "Cliente";
+    }
+
+    function cycleBalance(loan, date, payments = records.pagamentos) {
+      const cycle = payments.filter(payment => payment.eid === loan.id
+        && payment.vencimento === loan.vencimento && !payment.principal);
+      const monthlyInterest = interest(loan);
+      const pendingInterest = Math.max(0, monthlyInterest - sum(cycle, "juros"));
+      const lastPayment = cycle.reduce((last, payment) => payment.data > last ? payment.data : last, "");
+      const lastInterest = cycle.reduce((last, payment) => payment.juros && payment.data > last ? payment.data : last, "");
+      const penaltyDate = pendingInterest === 0 && lastInterest ? lastInterest : date;
+      return {
+        juros: pendingInterest,
+        multa: Math.max(0, penalty(loan.vencimento, penaltyDate) - sum(cycle, "multa")),
+        lastPayment
+      };
+    }
+
+    function matchesClient(client) {
+      const query = clientFilter.trim().toLocaleLowerCase("pt-BR");
+      const document = String(client.documento ?? "").replace(/\D/g, "");
+      const digits = query.replace(/\D/g, "");
+      return client.nome.toLocaleLowerCase("pt-BR").includes(query)
+        || Boolean(digits && /^[\d.\-/\s]+$/.test(query) && document.includes(digits));
+    }
+
+    function renderOverdueAlert() {
+      const day = today();
+      const overdue = (records?.emprestimos ?? [])
+        .filter(loan => active(loan) && loan.vencimento < day)
+        .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+      overdueAlert.hidden = overdue.length === 0;
+      overdueList.innerHTML = overdue.map(loan => {
+        const days = lateDays(loan.vencimento, day);
+        const duration = days === 1 ? "1 dia" : `${days} dias`;
+        return `<li><mark>${escapeHtml(clientName(loan.cid))}</mark> · nº ${escapeHtml(loanNumber(loan.id))} · ${duration} de atraso</li>`;
+      }).join("");
+    }
+
+    function render() {
+      renderOverdueAlert();
+      view.inert = saving;
+      if (!records) {
+        view.replaceChildren();
+        return;
+      }
+      nav.querySelectorAll("button").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.tab === currentTab));
+      });
+      const hasDraft = view.contains(document.activeElement) && document.activeElement.matches("input, select");
+      if (hasDraft) return;
+      const pages = { novo: newLoan, clientes: clients, emprestimos: loans, cobrancas: charges, relatorios: reports, dados: dataPage };
+      view.innerHTML = pages[currentTab]();
+    }
+
+    function clients() {
+      return card("Localizar cliente", `
+        <form data-form="search">
+          <label for="search-client">Nome ou número do documento</label>
+          <input id="search-client" name="busca" value="${escapeHtml(clientFilter)}">
+          <button>Buscar</button>
+          <button class="secondary" type="button" data-action="clear-search">Limpar</button>
+        </form>`) + card("Novo cadastro para análise", clientForm())
+        + (records.clientes.filter(matchesClient).map(client => card(escapeHtml(client.nome), `
+        <p class="${client.status === "aprovado" ? "good" : "danger"}">${escapeHtml(client.status.toUpperCase())}</p>
+        ${activeClientEdit === client.id ? clientForm(client) : `
+          ${client.documento ? `<p>Documento ${escapeHtml(client.documento)}</p>` : ""}
+          ${client.endereco ? `<p>Endereço ${escapeHtml(client.endereco)}</p>` : ""}
+          ${action("Editar cadastro", "edit-client", client.id)}
+          ${clientFiles(client)}
+        `}
+        ${client.status === "pendente" ? `<div class="actions">
+          ${action("Aprovar", "approve", client.id, "green")}
+          ${action("Recusar", "reject", client.id, "red")}
+        </div>` : ""}`)).join("") || card("Clientes", "<p>Nenhum cliente encontrado.</p>"));
+    }
+
+    function clientForm(client) {
+      const id = client?.id ?? 0;
+      return `<form data-form="client" data-id="${id}">
+          <label for="name-${id}">Nome do cliente</label>
+          <input id="name-${id}" name="nome" value="${escapeHtml(client?.nome)}" maxlength="100" required>
+          <label for="document-${id}">CPF, RG ou outro documento</label>
+          <input id="document-${id}" name="documento" value="${escapeHtml(client?.documento)}" maxlength="40">
+          <label for="address-${id}">Endereço</label>
+          <input id="address-${id}" name="endereco" value="${escapeHtml(client?.endereco)}" maxlength="250">
+          <button>${id ? "Salvar cadastro" : "Enviar para aprovação"}</button>
+          ${id ? action("Cancelar", "cancel-edit", id) : ""}
+        </form>`;
+    }
+
+    function clientFiles(client) {
+      return `<details><summary>Documentos</summary>
+        <p class="muted">Envie PDF, JPG ou PNG de até 3 MB por documento.</p>
+        ${Object.entries(documentTypes).map(([kind, label]) => `
+          <form data-form="attachment" data-id="${client.id}" data-kind="${kind}">
+            <label for="file-${client.id}-${kind}">${label}</label>
+            <input id="file-${client.id}-${kind}" name="arquivo" type="file" accept=".pdf,.jpg,.jpeg,.png" required>
+            <button>Salvar arquivo</button>
+            <button class="secondary" type="button" data-action="fetch-file" data-id="${client.id}" data-kind="${kind}">Baixar arquivo salvo</button>
+          </form>`).join("")}</details>`;
+    }
+
+    function newLoan() {
+      const options = records.clientes.filter(client => client.status === "aprovado")
+        .map(client => `<option value="${client.id}">${escapeHtml(client.nome)}</option>`).join("");
+      return card("Cadastrar empréstimo", `
+        <form data-form="loan">
+          <label for="client">Cliente aprovado</label>
+          <select id="client" name="cid" required>${options || '<option value="">Nenhum cliente aprovado</option>'}</select>
+          <label for="principal">Valor principal (R$)</label>
+          <input id="principal" name="principal" type="number" min="0.01" step="0.01" required>
+          <label for="rate">Juros ao mês (%)</label>
+          <input id="rate" name="taxa" type="number" min="0" max="100" step="0.01" required>
+          <label for="start">Data da entrega do dinheiro</label>
+          <input id="start" name="data" type="date" value="${today()}" required>
+          <button ${options ? "" : "disabled"}>Cadastrar empréstimo</button>
+        </form>
+        <p class="muted">Os juros vencem mensalmente a partir de um mês após a entrega do dinheiro.</p>`);
+    }
+
+    function loans() {
+      return records.emprestimos.map(loan => card(`Empréstimo nº ${loanNumber(loan.id)}`, `
+        <p>${escapeHtml(clientName(loan.cid))} · Principal ${money(loan.principal)}</p>
+        <p>Juros mensais de ${(loan.taxa / 100).toLocaleString("pt-BR")}% · ${money(interest(loan))}</p>
+        <p class="${loan.quitado ? "good" : "muted"}">${loan.quitado ? "QUITADO" : "ATIVO"}</p>
+        ${loan.quitado ? "" : `<p>Próximo vencimento ${displayDate(loan.vencimento)}</p>
+          ${action("Quitar principal", "settle", loan.id)}`}`)).join("")
+        || card("Empréstimos", "<p>Nenhum empréstimo cadastrado.</p>");
+    }
+
+    function charges() {
+      const day = today();
+      const ordered = records.emprestimos.filter(active).sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+      return ordered.map(loan => {
+        const overdue = lateDays(loan.vencimento, day);
+        const { juros, multa } = cycleBalance(loan, day);
+        const warning = overdue ? `${overdue} dia(s) de atraso` : loan.vencimento === day ? "Vence hoje" : "A vencer";
+        return card(`${escapeHtml(clientName(loan.cid))} · nº ${loanNumber(loan.id)}`, `
+          <p>Vencimento ${displayDate(loan.vencimento)}</p>
+          <p class="${loan.vencimento <= day ? "danger" : ""}">${warning}</p>
+          <p>Juros em aberto ${money(juros)}<br>Encargo calculado ${money(multa)}</p>
+          <p><strong>Total em aberto ${money(juros + multa)}</strong></p>
+          <div class="actions">${action("Registrar pagamento", "pay", loan.id, "green")}${action("WhatsApp", "whatsapp", loan.id)}</div>
+          ${paymentLoan === loan.id ? paymentForm(loan, day, juros, multa) : ""}`);
+      }).join("") || card("Cobranças", "<p>Nenhum empréstimo ativo.</p>");
+    }
+
+    function paymentForm(loan, day, juros, multa) {
+      return `<form data-form="payment" data-id="${loan.id}">
+        <label for="pay-date">Data do recebimento</label>
+        <input id="pay-date" name="data" type="date" value="${day}" min="${cycleBalance(loan, day).lastPayment || loan.data}" max="${day}" required>
+        <label for="pay-interest">Juros recebidos (R$)</label>
+        <input id="pay-interest" name="juros" type="number" min="0" step="0.01" value="${(juros / 100).toFixed(2)}" required>
+        <label for="pay-fee">Encargos recebidos (R$)</label>
+        <input id="pay-fee" name="multa" type="number" min="0" step="0.01" value="${(multa / 100).toFixed(2)}" required>
+        <button>Salvar pagamento</button>
+        ${action("Cancelar", "cancel-payment", loan.id)}
+      </form>`;
+    }
+
+    function reports() {
+      const day = today();
+      const loans = records.emprestimos.filter(loan => !reportClient || loan.cid === reportClient);
+      const transactions = records.pagamentos.filter(payment => !reportClient || payment.cid === reportClient);
+      const payments = [...transactions].sort((a, b) => b.data.localeCompare(a.data)).map(payment => `<article>
+        <p><strong>${escapeHtml(clientName(payment.cid))}</strong> · nº ${loanNumber(payment.eid)}<br>
+          Recebido em ${displayDate(payment.data)}<br>
+          Juros ${money(payment.juros)} · Encargos ${money(payment.multa)} · Principal ${money(payment.principal)}</p>
+      </article>`).join("");
+      const options = records.clientes.map(client =>
+        `<option value="${client.id}" ${reportClient === client.id ? "selected" : ""}>${escapeHtml(client.nome)}</option>`).join("");
+      return card("Relatório", `<label for="report-client">Cliente</label>
+          <select id="report-client"><option value="0">Todos os clientes</option>${options}</select>
+          <p>Valor emprestado <strong>${money(sum(loans, "principal"))}</strong></p>
+          <p>Juros recebidos <strong>${money(sum(transactions, "juros"))}</strong></p>
+          <p>Encargos recebidos <strong>${money(sum(transactions, "multa"))}</strong></p>
+          <p>Principal em aberto <strong>${money(sum(loans.filter(active), "principal"))}</strong></p>`)
+        + (loans.length ? card("Situação dos empréstimos", loans.map(loan => `<p>
+          <strong>${escapeHtml(clientName(loan.cid))} · nº ${loanNumber(loan.id)}</strong><br>
+          Meses pagos ${Math.max(0, loan.mesVencimento - 1)} ·
+          ${active(loan) ? `${lateDays(loan.vencimento, day)} dia(s) em atraso` : "Quitado"}</p>`).join("")) : "")
+        + card("Histórico de pagamentos", payments || "<p>Sem pagamentos registrados.</p>");
+    }
+
+    function dataPage() {
+      return card("Cópias dos dados", `
+        <p>A cópia inclui os cadastros, empréstimos e pagamentos. Baixe os documentos na ficha de cada cliente.</p>
+        ${action("Baixar cópia dos dados na nuvem", "export", 0)}
+        <p>Se você usou o protótipo neste navegador, pode baixar os registros antigos separadamente.</p>
+        ${action("Baixar dados do protótipo", "export-local", 0)}
+        <p class="muted">As cópias em JSON ficam sem criptografia.</p>`)
+        + card("Apagar dados de teste", `
+          <p>Apaga todos os clientes, documentos, empréstimos e pagamentos. Seu acesso e o ícone serão mantidos.</p>
+          <p>Antes, baixe a cópia dos dados e os documentos que desejar guardar.</p>
+          ${action("Apagar todos os dados de teste", "clear-tests", 0, "red")}
+        `);
+    }
+
+    function downloadBlob(blob, filename) {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+
+    function download(data, prefix) {
+      downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `${prefix}-${today()}.json`);
+    }
+
+    function attachmentRefs(current, clientId, kind) {
+      if (!Object.hasOwn(documentTypes, kind) || !records.clientes.some(client => client.id === clientId)) return;
+      const manifest = cloud.doc(current.ref, "anexos", `${clientId}-${kind}`);
+      const part = index => cloud.doc(manifest, "partes", String(index));
+      return { manifest, part };
+    }
+
+    function storedPartCount(snapshot) {
+      if (!snapshot.exists()) return 0;
+      const { count } = snapshot.data();
+      if (!Number.isInteger(count) || count < 1 || count > maxParts) throw new Error("INVALID_ATTACHMENT");
+      return count;
+    }
+
+    function attachmentType(bytes) {
+      if ([37, 80, 68, 70, 45].every((byte, index) => bytes[index] === byte)) return "application/pdf";
+      if ([255, 216, 255].every((byte, index) => bytes[index] === byte)) return "image/jpeg";
+      if ([137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte)) return "image/png";
+      return "";
+    }
+
+    async function handleAttachment(clientId, kind, file) {
+      const current = session;
+      if (!current || saving) return;
+      const refs = attachmentRefs(current, clientId, kind);
+      if (!refs) return;
+      if (file && (!file.size || file.size > partSize * maxParts)) {
+        return setStatus("Escolha um arquivo de até 3 MB.", true);
+      }
+      saving = true;
+      view.inert = true;
+      setStatus(file ? "Salvando documento…" : "Carregando documento…");
+      try {
+        if (file) {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const type = attachmentType(bytes);
+          if (!type) return setStatus("Escolha um PDF, JPG ou PNG válido.", true);
+          if (session !== current) return;
+          const count = Math.ceil(bytes.length / partSize);
+          const extension = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" }[type];
+          await cloud.runTransaction(cloud.instance, async transaction => {
+            const previous = storedPartCount(await transaction.get(refs.manifest));
+            for (let index = 0; index < count; index++) {
+              const data = cloud.Bytes.fromUint8Array(bytes.subarray(index * partSize, (index + 1) * partSize));
+              transaction.set(refs.part(index), { data });
+            }
+            for (let index = count; index < previous; index++) transaction.delete(refs.part(index));
+            transaction.set(refs.manifest, { count, type, extension });
+          });
+          if (session === current) setStatus("Documento salvo no Firestore.");
+        } else {
+          const result = await cloud.runTransaction(cloud.instance, async transaction => {
+            const manifest = await transaction.get(refs.manifest);
+            const count = storedPartCount(manifest);
+            if (!count) return;
+            const { type, extension } = manifest.data();
+            const parts = await Promise.all(Array.from({ length: count }, (_, index) => transaction.get(refs.part(index))));
+            const bytes = parts.map(part => part.data()?.data.toUint8Array());
+            if (bytes.some(part => !part)) throw new Error("INVALID_ATTACHMENT");
+            return { blob: new Blob(bytes, { type }), extension };
+          });
+          if (session !== current) return;
+          if (!result) return setStatus("Ainda não há arquivo salvo para este campo.");
+          downloadBlob(result.blob, `${kind}-cliente-${clientId}.${result.extension}`);
+          setStatus("Documento baixado.");
+        }
+      } catch (error) {
+        if (session === current) setStatus(error.code === "permission-denied"
+          ? "O Firestore recusou o acesso ao documento. Confira as regras para anexos."
+          : "Não foi possível concluir a operação com o documento.", true);
+      } finally {
+        if (session === current) {
+          saving = false;
+          view.inert = false;
+        }
+      }
+    }
+
+    function exportLocal() {
+      try {
+        const raw = localStorage.getItem("jurocontrol_demo_v1");
+        if (!raw) return setStatus("Nenhum dado antigo encontrado neste navegador.");
+        download({ dados: JSON.parse(raw) }, "credmaster-prototipo");
+      } catch {
+        setStatus("Não foi possível ler os dados do protótipo.", true);
+      }
+    }
+
+    function startSession(user) {
+      session?.unsubscribe?.();
+      session = undefined;
+      records = undefined;
+      currentTab = "novo";
+      clientFilter = "";
+      reportClient = 0;
+      activeClientEdit = 0;
+      paymentLoan = 0;
+      saving = false;
+      const authorized = user?.uid === ownerUid;
+      main.hidden = !authorized;
+      login.hidden = authorized;
+      loginButton.disabled = Boolean(user);
+      resetButton.disabled = Boolean(user);
+      nav.hidden = true;
+      render();
+      if (!authorized) {
+        if (user) {
+          loginMessage.textContent = "Esta conta não tem acesso ao CredMaster.";
+          auth.signOut(auth.instance).catch(() => {
+            loginMessage.textContent = "Acesso bloqueado. Feche esta aba.";
+          });
+        } else if (loginMessage.textContent === "Carregando login…") {
+          loginMessage.textContent = "";
+        }
+        return;
+      }
+
+      const ref = cloud.doc(cloud.instance, "credmaster", ownerUid);
+      const current = { ref };
+      session = current;
+      setStatus("Conectando ao banco de dados…");
+      current.unsubscribe = cloud.onSnapshot(ref, { includeMetadataChanges: true }, snapshot => {
+        if (session !== current || snapshot.metadata.hasPendingWrites) return;
+        if (snapshot.metadata.fromCache) {
+          setStatus("Aguardando conexão com o Firestore…");
+          return;
+        }
+        const next = snapshot.exists() ? snapshot.data() : emptyState();
+        if (records && next.revision < records.revision) return;
+        if (records?.revision === next.revision) {
+          if (!saving && status.textContent === "Aguardando conexão com o Firestore…") setStatus("");
+          return;
+        }
+        records = next;
+        nav.hidden = false;
+        if (!saving) {
+          setStatus("");
+          render();
+        }
+      }, error => {
+        if (session !== current) return;
+        records = undefined;
+        nav.hidden = true;
+        render();
+        setStatus(error.code === "permission-denied"
+          ? "O Firestore recusou o acesso. Confira o UID nas regras publicadas."
+          : "O banco não carregou. Atualize a página para tentar de novo.", true);
+      });
+    }
+
+    async function save(update) {
+      if (!records || !session || saving) return;
+      const current = session;
+      const revision = records.revision;
+      saving = true;
+      view.inert = true;
+      setStatus("Salvando no Firestore…");
+      try {
+        const next = await cloud.runTransaction(cloud.instance, async transaction => {
+          const snapshot = await transaction.get(current.ref);
+          const latest = snapshot.exists() ? snapshot.data() : emptyState();
+          if (latest.revision !== revision) throw new Error("STALE");
+          update(latest);
+          latest.revision++;
+          transaction.set(current.ref, latest);
+          return latest;
+        });
+        if (session !== current) return;
+        if (!records || records.revision <= next.revision) records = next;
+        view.replaceChildren();
+        setStatus("Salvo no Firestore.");
+        return true;
+      } catch (error) {
+        if (session !== current) return;
+        if (error.message === "STALE") {
+          setStatus("Os dados mudaram em outra aba ou aparelho. Confira os valores e tente de novo.", true);
+        } else if (error.code === "permission-denied") {
+          setStatus("O Firestore recusou a gravação. Confira as regras publicadas.", true);
+        } else {
+          setStatus("Não foi possível confirmar a gravação. Confira a conexão e os registros antes de repetir.", true);
+        }
+      } finally {
+        if (session === current) {
+          saving = false;
+          view.inert = false;
+          if (records && records.revision !== revision) render();
+        }
+      }
+    }
+
+    view.addEventListener("submit", event => {
+      const form = event.target;
+      event.preventDefault();
+      if (!records || saving) return;
+      const fields = new FormData(form);
+      if (form.dataset.form === "attachment") {
+        return handleAttachment(Number(form.dataset.id), form.dataset.kind, fields.get("arquivo"));
+      }
+      if (form.dataset.form === "search") {
+        clientFilter = fields.get("busca");
+        view.replaceChildren();
+        return render();
+      }
+      if (form.dataset.form === "client") {
+        const id = Number(form.dataset.id);
+        const nome = fields.get("nome").trim();
+        const documento = fields.get("documento").trim();
+        const endereco = fields.get("endereco").trim();
+        if (!nome) return setStatus("Informe o nome do cliente.", true);
+        return save(next => {
+          if (id) {
+            Object.assign(next.clientes.find(client => client.id === id), { nome, documento, endereco });
+          } else {
+            next.clientes.push({ id: nextId(next.clientes), nome, documento, endereco, status: "pendente" });
+          }
+        }).then(saved => {
+          if (!saved || !id) return;
+          activeClientEdit = 0;
+          render();
+        });
+      }
+      if (form.dataset.form === "payment") {
+        return recordPayment(Number(form.dataset.id), fields);
+      }
+      const cid = Number(fields.get("cid"));
+      const principal = Math.round(Number(fields.get("principal")) * 100);
+      const taxa = Math.round(Number(fields.get("taxa")) * 100);
+      const data = fields.get("data");
+      const client = records.clientes.find(item => item.id === cid);
+      if (client?.status !== "aprovado" || !Number.isSafeInteger(principal * 10_000) || principal <= 0
+          || !Number.isInteger(taxa) || taxa < 0 || taxa > 10_000 || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+        return setStatus("Confira os dados do empréstimo.", true);
+      }
+      return save(next => next.emprestimos.push({
+        id: nextId(next.emprestimos), cid, principal, taxa, data,
+        mesVencimento: 1, vencimento: dueDate(data, 1), quitado: false
+      }));
+    });
+
+    async function recordPayment(id, fields) {
+      const loan = records.emprestimos.find(item => item.id === id);
+      if (!loan || loan.quitado) return;
+      const data = fields.get("data");
+      const juros = Math.round(Number(fields.get("juros")) * 100);
+      const multa = Math.round(Number(fields.get("multa")) * 100);
+      const balance = cycleBalance(loan, data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data) || data < loan.data || data > today() || data < balance.lastPayment
+          || !Number.isSafeInteger(juros) || !Number.isSafeInteger(multa) || juros < 0 || multa < 0
+          || juros > balance.juros || multa > balance.multa) {
+        return setStatus("Confira a data e informe valores até o saldo da cobrança nessa data.", true);
+      }
+      const complete = juros === balance.juros && multa === balance.multa;
+      if (juros + multa === 0 && (!complete || data < loan.vencimento)) {
+        return setStatus("Informe um valor recebido.", true);
+      }
+      const saved = await save(next => {
+        const target = next.emprestimos.find(item => item.id === id);
+        next.pagamentos.push({ eid: id, cid: loan.cid, juros, multa, principal: 0, data, vencimento: loan.vencimento });
+        if (complete) {
+          target.mesVencimento++;
+          target.vencimento = dueDate(target.data, target.mesVencimento);
+        }
+      });
+      if (saved) {
+        paymentLoan = 0;
+        render();
+      }
+    }
+
+    function settleLoan(loan) {
+      const data = today();
+      if (data < loan.data) return setStatus("A quitação deve ocorrer na data do empréstimo ou depois.", true);
+      const balance = cycleBalance(loan, data);
+      if (loan.vencimento <= data && balance.juros + balance.multa > 0) {
+        return setStatus("Registre os juros e encargos em aberto na aba Cobranças antes de quitar o principal.", true);
+      }
+      if (!confirm(`Confirmar o recebimento de ${money(loan.principal)} e quitar o principal?`)) return;
+      return save(next => {
+        const target = next.emprestimos.find(item => item.id === loan.id);
+        next.pagamentos.push({
+          eid: target.id, cid: target.cid, juros: 0, multa: 0,
+          principal: target.principal, data, vencimento: target.vencimento
+        });
+        target.quitado = true;
+      });
+    }
+
+    view.addEventListener("change", event => {
+      const input = event.target;
+      if (!records || saving) return;
+      if (input.id === "report-client") {
+        reportClient = Number(input.value);
+        view.replaceChildren();
+        render();
+      }
+      if (input.id === "pay-date" && input.value) {
+        const loan = records.emprestimos.find(item => item.id === paymentLoan);
+        if (loan) {
+          const { multa } = cycleBalance(loan, input.value);
+          input.form.elements.multa.value = (multa / 100).toFixed(2);
+        }
+      }
+    });
+
+    view.addEventListener("click", event => {
+      const button = event.target.closest("[data-action]");
+      if (!button || !records || saving) return;
+      const { action: name, id } = button.dataset;
+      const number = Number(id);
+      if (name === "clear-tests") {
+        if (!session) return;
+      if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s) e seus documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
+      if (prompt("Para apagar, digite exatamente: APAGAR TESTES") !== "APAGAR TESTES") return;
+      return clearTestData(new Map([
+        ["confirmacao", "APAGAR TESTES"], ["backup", "on"]
+      ]));
+      }
+      if (name === "export-local") return exportLocal();
+      if (name === "export") return download({ dados: records }, "credmaster-nuvem");
+      if (name === "fetch-file") return handleAttachment(number, button.dataset.kind);
+      if (name === "clear-search" || name === "edit-client" || name === "cancel-edit") {
+        if (name === "clear-search") clientFilter = "";
+        if (name === "edit-client") activeClientEdit = number;
+        if (name === "cancel-edit") activeClientEdit = 0;
+        view.replaceChildren();
+        return render();
+      }
+      if (name === "approve" || name === "reject") {
+        const client = records.clientes.find(item => item.id === number);
+        if (client?.status !== "pendente") return;
+        return save(next => {
+          next.clientes.find(item => item.id === number).status = name === "approve" ? "aprovado" : "recusado";
+        });
+      }
+      const loan = records.emprestimos.find(item => item.id === number);
+      if (!loan || loan.quitado) return;
+      if (name === "pay" || name === "cancel-payment") {
+        paymentLoan = name === "pay" ? loan.id : 0;
+        view.replaceChildren();
+        return render();
+      }
+      if (name === "whatsapp") {
+        const day = today();
+        const { juros, multa } = cycleBalance(loan, day);
+        const message = `Olá, ${clientName(loan.cid)}!\nEmpréstimo nº ${loanNumber(loan.id)}\nData do empréstimo ${displayDate(loan.data)}\nValor emprestado ${money(loan.principal)}\nVencimento dos juros ${displayDate(loan.vencimento)}\nJuros em aberto ${money(juros)}\nDias em atraso ${lateDays(loan.vencimento, day)}\nEncargos calculados ${money(multa)}\nTotal em aberto ${money(juros + multa)}\nCaso já tenha pago, favor enviar o comprovante.`;
+        window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (name === "settle") return settleLoan(loan);
+    });
+
+    nav.addEventListener("click", event => {
+      const button = event.target.closest("[data-tab]");
+      if (!button || !records || saving) return;
+      currentTab = button.dataset.tab;
+      view.replaceChildren();
+      render();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) renderOverdueAlert();
+    });
+
+    try {
+      const [appSdk, authSdk, firestoreSdk] = await Promise.all([
+        import(sdk + "firebase-app.js"),
+        import(sdk + "firebase-auth.js"),
+        import(sdk + "firebase-firestore.js")
+      ]);
+      const app = appSdk.initializeApp(config);
+      auth = { ...authSdk, instance: authSdk.initializeAuth(app, { persistence: authSdk.browserSessionPersistence }) };
+      cloud = { ...firestoreSdk, instance: firestoreSdk.getFirestore(app) };
+      auth.onAuthStateChanged(auth.instance, startSession, () => {
+        startSession(null);
+        loginMessage.textContent = "A sessão não carregou. Atualize a página.";
+      });
+      document.querySelector("#login-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        if (loginButton.disabled) return;
+        loginButton.disabled = true;
+        resetButton.disabled = true;
+        loginMessage.textContent = "Entrando…";
+        try {
+          const { user } = await auth.signInWithEmailAndPassword(auth.instance, email.value.trim(), password.value);
+          if (user.uid === ownerUid) loginMessage.textContent = "";
+        } catch (error) {
+          loginMessage.textContent = error.code === "auth/network-request-failed"
+            ? "Falha de conexão. Tente novamente."
+            : "Não foi possível entrar. Confira seu e-mail e sua senha.";
+        } finally {
+          password.value = "";
+          loginButton.disabled = Boolean(auth.instance.currentUser);
+          resetButton.disabled = loginButton.disabled;
+        }
+      });
+      resetButton.addEventListener("click", async () => {
+        if (!email.value || !email.reportValidity()) {
+          email.focus();
+          loginMessage.textContent = "Informe seu e-mail para redefinir a senha.";
+          return;
+        }
+        resetButton.disabled = true;
+        loginButton.disabled = true;
+        try {
+          await auth.sendPasswordResetEmail(auth.instance, email.value.trim());
+          loginMessage.textContent = "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha.";
+        } catch (error) {
+          loginMessage.textContent = error.code === "auth/user-not-found"
+            ? "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha."
+            : "Não foi possível solicitar a redefinição. Tente novamente.";
+        } finally {
+          loginButton.disabled = Boolean(auth.instance.currentUser);
+          resetButton.disabled = loginButton.disabled;
+        }
+      });
+      logout.addEventListener("click", async () => {
+        try {
+          await auth.signOut(auth.instance);
+          loginMessage.textContent = "Você saiu do CredMaster.";
+        } catch {
+          setStatus("Não foi possível sair. Feche esta aba para encerrar a sessão.", true);
+        }
+      });
+    } catch {
+      loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
+    }
+
+    async function clearTestData(fields) {
+      if (!records || !session || saving) return;
+      if (fields.get("confirmacao") !== "APAGAR TESTES" || !fields.get("backup")) {
+        return setStatus("Confirme que são dados de teste e digite APAGAR TESTES.", true);
+      }
+      // Each client has three attachment slots with at most six parts each.
+      // Keep the entire deletion atomic and below Firestore's write limit.
+      if (records.clientes.length > 20) {
+        return setStatus("Esta limpeza é limitada a 20 clientes de teste por segurança. Nenhum dado foi apagado.", true);
+      }
+      const current = session;
+      const revision = records.revision;
+      saving = true;
+      view.inert = true;
+      setStatus("Apagando os dados de teste… Aguarde a confirmação.");
+      try {
+        const next = await cloud.runTransaction(cloud.instance, async transaction => {
+          const snapshot = await transaction.get(current.ref);
+          const latest = snapshot.exists() ? snapshot.data() : emptyState();
+          if (latest.revision !== revision) throw new Error("STALE");
+          for (const client of latest.clientes) {
+            for (const kind of Object.keys(documentTypes)) {
+              const manifest = cloud.doc(current.ref, "anexos", `${client.id}-${kind}`);
+              for (let index = 0; index < maxParts; index++) {
+                transaction.delete(cloud.doc(manifest, "partes", String(index)));
+              }
+              transaction.delete(manifest);
+            }
+          }
+          const cleared = { ...emptyState(), revision: latest.revision + 1 };
+          transaction.set(current.ref, cleared);
+          return cleared;
+        });
+        if (session !== current) return;
+        // Preserve a newer snapshot if another device has already added data.
+        if (!records || records.revision <= next.revision) records = next;
+        clientFilter = "";
+        reportClient = 0;
+        paymentLoan = 0;
+        activeClientEdit = 0;
+        currentTab = "dados";
+        setStatus("Dados de teste apagados. Seu acesso foi mantido. Você já pode cadastrar clientes reais.");
+      } catch (error) {
+        if (session !== current) return;
+        setStatus(error.message === "STALE"
+          ? "Os dados mudaram em outra aba ou aparelho. Nenhum dado foi apagado por esta operação. Confira e tente novamente."
+          : error.code === "permission-denied"
+          ? "A limpeza foi recusada. Nenhum dado foi apagado. Publique as regras atualizadas de exclusão dos anexos."
+          : "Não foi possível confirmar a limpeza. Confira a conexão e os registros antes de repetir.", true);
+      } finally {
+        if (session === current) {
+          saving = false;
+          view.inert = false;
+          view.replaceChildren();
+          render();
+        }
+      }
+    }
+
+  </script>
+</body>
+</html>

@@ -345,7 +345,12 @@
         ${action("Baixar cópia dos dados na nuvem", "export", 0)}
         <p>Se você usou o protótipo neste navegador, pode baixar os registros antigos separadamente.</p>
         ${action("Baixar dados do protótipo", "export-local", 0)}
-        <p class="muted">As cópias em JSON ficam sem criptografia.</p>`);
+        <p class="muted">As cópias em JSON ficam sem criptografia.</p>`)
+        + card("Apagar dados de teste", `
+          <p>Apaga todos os clientes, documentos, empréstimos e pagamentos. Seu acesso e o ícone serão mantidos.</p>
+          <p>Antes, baixe a cópia dos dados e os documentos que desejar guardar.</p>
+          ${action("Apagar todos os dados de teste", "clear-tests", 0, "red")}
+        `);
     }
 
     function downloadBlob(blob, filename) {
@@ -669,6 +674,14 @@
       if (!button || !records || saving) return;
       const { action: name, id } = button.dataset;
       const number = Number(id);
+      if (name === "clear-tests") {
+        if (!session) return;
+      if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s) e seus documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
+      if (prompt("Para apagar, digite exatamente: APAGAR TESTES") !== "APAGAR TESTES") return;
+      return clearTestData(new Map([
+        ["confirmacao", "APAGAR TESTES"], ["backup", "on"]
+      ]));
+      }
       if (name === "export-local") return exportLocal();
       if (name === "export") return download({ dados: records }, "credmaster-nuvem");
       if (name === "fetch-file") return handleAttachment(number, button.dataset.kind);
@@ -778,6 +791,66 @@
     } catch {
       loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
     }
+
+    async function clearTestData(fields) {
+      if (!records || !session || saving) return;
+      if (fields.get("confirmacao") !== "APAGAR TESTES" || !fields.get("backup")) {
+        return setStatus("Confirme que são dados de teste e digite APAGAR TESTES.", true);
+      }
+      // Each client has three attachment slots with at most six parts each.
+      // Keep the entire deletion atomic and below Firestore's write limit.
+      if (records.clientes.length > 20) {
+        return setStatus("Esta limpeza é limitada a 20 clientes de teste por segurança. Nenhum dado foi apagado.", true);
+      }
+      const current = session;
+      const revision = records.revision;
+      saving = true;
+      view.inert = true;
+      setStatus("Apagando os dados de teste… Aguarde a confirmação.");
+      try {
+        const next = await cloud.runTransaction(cloud.instance, async transaction => {
+          const snapshot = await transaction.get(current.ref);
+          const latest = snapshot.exists() ? snapshot.data() : emptyState();
+          if (latest.revision !== revision) throw new Error("STALE");
+          for (const client of latest.clientes) {
+            for (const kind of Object.keys(documentTypes)) {
+              const manifest = cloud.doc(current.ref, "anexos", `${client.id}-${kind}`);
+              for (let index = 0; index < maxParts; index++) {
+                transaction.delete(cloud.doc(manifest, "partes", String(index)));
+              }
+              transaction.delete(manifest);
+            }
+          }
+          const cleared = { ...emptyState(), revision: latest.revision + 1 };
+          transaction.set(current.ref, cleared);
+          return cleared;
+        });
+        if (session !== current) return;
+        // Preserve a newer snapshot if another device has already added data.
+        if (!records || records.revision <= next.revision) records = next;
+        clientFilter = "";
+        reportClient = 0;
+        paymentLoan = 0;
+        activeClientEdit = 0;
+        currentTab = "dados";
+        setStatus("Dados de teste apagados. Seu acesso foi mantido. Você já pode cadastrar clientes reais.");
+      } catch (error) {
+        if (session !== current) return;
+        setStatus(error.message === "STALE"
+          ? "Os dados mudaram em outra aba ou aparelho. Nenhum dado foi apagado por esta operação. Confira e tente novamente."
+          : error.code === "permission-denied"
+          ? "A limpeza foi recusada. Nenhum dado foi apagado. Publique as regras atualizadas de exclusão dos anexos."
+          : "Não foi possível confirmar a limpeza. Confira a conexão e os registros antes de repetir.", true);
+      } finally {
+        if (session === current) {
+          saving = false;
+          view.inert = false;
+          view.replaceChildren();
+          render();
+        }
+      }
+    }
+
   </script>
 </body>
 </html>
