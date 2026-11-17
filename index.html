@@ -136,6 +136,7 @@
     let reportClient = 0;
     let paymentLoan = 0;
     let activeClientEdit = 0;
+    let activeClientDelete = 0;
 
     function dueDate(start, monthOffset) {
       const [year, month, day] = start.split("-").map(Number);
@@ -212,7 +213,7 @@
     }
 
     function clients() {
-      return card("Localizar cliente", `
+      return deleteConfirmation() + card("Localizar cliente", `
         <form data-form="search">
           <label for="search-client">Nome ou número do documento</label>
           <input id="search-client" name="busca" value="${escapeHtml(clientFilter)}">
@@ -232,6 +233,23 @@
           ${action("Aprovar", "approve", client.id, "green")}
           ${action("Recusar", "reject", client.id, "red")}
         </div>` : ""}`)).join("") || card("Clientes", "<p>Nenhum cliente encontrado.</p>"));
+    }
+
+    function deleteConfirmation() {
+      const client = records.clientes.find(item => item.id === activeClientDelete);
+      if (!client) return "";
+      const loans = records.emprestimos.filter(item => item.cid === client.id);
+      return card("Confirmar exclusão do cliente", `
+        <form data-form="delete-client" data-id="${client.id}">
+          <p class="danger">Apagar definitivamente ${escapeHtml(client.nome)}?</p>
+          <p>Serão excluídos os documentos, ${loans.length} empréstimo(s) e todo o histórico de pagamentos deste cliente, inclusive dívidas em aberto. Os outros clientes serão mantidos.</p>
+          <p>Baixe uma cópia dos dados e os documentos antes se precisar guardar o histórico.</p>
+          <label for="delete-confirmation">Digite APAGAR CLIENTE para confirmar</label>
+          <input id="delete-confirmation" name="confirmacao" autocomplete="off" autocorrect="off" spellcheck="false" required>
+          <button class="red" type="submit">Confirmar exclusão</button>
+          ${action("Cancelar", "cancel-delete-client", client.id)}
+          <p class="danger" id="delete-error" role="alert"></p>
+        </form>`);
     }
 
     function clientForm(client) {
@@ -468,6 +486,7 @@
       clientFilter = "";
       reportClient = 0;
       activeClientEdit = 0;
+      activeClientDelete = 0;
       paymentLoan = 0;
       saving = false;
       const authorized = user?.uid === ownerUid;
@@ -567,6 +586,9 @@
       event.preventDefault();
       if (!records || saving) return;
       const fields = new FormData(form);
+      if (form.dataset.form === "delete-client") {
+        return deleteClient(Number(form.dataset.id), fields.get("confirmacao"));
+      }
       if (form.dataset.form === "attachment") {
         return handleAttachment(Number(form.dataset.id), form.dataset.kind, fields.get("arquivo"));
       }
@@ -682,7 +704,17 @@
       if (!button || !records || saving) return;
       const { action: name, id } = button.dataset;
       const number = Number(id);
-      if (name === "delete-client") return deleteClient(number);
+      if (name === "delete-client" || name === "cancel-delete-client") {
+        activeClientDelete = name === "delete-client" ? number : 0;
+        view.replaceChildren();
+        render();
+        const input = document.querySelector("#delete-confirmation");
+        if (input) {
+          input.focus();
+          input.scrollIntoView({ block: "center" });
+        }
+        return;
+      }
       if (name === "clear-tests") {
         if (!session) return;
       if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s) e seus documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
@@ -812,13 +844,17 @@
       loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
     }
 
-    async function deleteClient(clientId) {
+    async function deleteClient(clientId, confirmation) {
       if (!records || !session || saving) return;
       const client = records.clientes.find(item => item.id === clientId);
       if (!client) return;
-      const countLoans = records.emprestimos.filter(item => item.cid === clientId).length;
-      if (!confirm(`Apagar definitivamente ${client.nome}?\n\nSerão excluídos os documentos, ${countLoans} empréstimo(s) e todo o histórico de pagamentos deste cliente, inclusive dívidas em aberto. Os outros clientes serão mantidos.\n\nBaixe uma cópia dos dados antes se precisar guardar o histórico.`)) return;
-      if (prompt(`Para confirmar a exclusão de ${client.nome}, digite: APAGAR CLIENTE`) !== "APAGAR CLIENTE") return;
+      if (String(confirmation ?? "").trim().replace(/\s+/g, " ").toUpperCase() !== "APAGAR CLIENTE") {
+        const message = "Digite APAGAR CLIENTE no campo e toque em Confirmar exclusão. Nenhum dado foi apagado.";
+        const error = document.querySelector("#delete-error");
+        if (error) error.textContent = message;
+        setStatus(message, true);
+        return;
+      }
       const current = session;
       const revision = records.revision;
       saving = true;
@@ -857,6 +893,7 @@
         reportClient = 0;
         paymentLoan = 0;
         activeClientEdit = 0;
+        activeClientDelete = 0;
         currentTab = "clientes";
         setStatus("Cliente e seus documentos, empréstimos e pagamentos apagados.");
       } catch (error) {
@@ -872,6 +909,7 @@
           view.inert = false;
           view.replaceChildren();
           render();
+          status.scrollIntoView({ block: "center" });
         }
       }
     }
