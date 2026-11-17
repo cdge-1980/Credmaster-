@@ -4,37 +4,114 @@ const KEY='jurocontrol_demo_v1';const today=()=>{const d=new Date();return [d.ge
 function addClient(ev){ev.preventDefault();const f=ev.target;db.clientes.push({id:Math.max(0,...db.clientes.map(c=>c.id))+1,nome:f.nome.value.trim(),status:'pendente'});save()}function clientStatus(id,status){db.clientes.find(c=>c.id===id).status=status;save()}function addLoan(ev){ev.preventDefault();const f=ev.target;const valor=Number(f.valor.value),taxa=Number(f.taxa.value),cid=Number(f.cid.value);if(!get(cid)||get(cid).status!=='aprovado'||valor<=0||taxa<0||taxa>100)return alert('Confira os dados.');db.emprestimos.push({id:Math.max(0,...db.emprestimos.map(e=>e.id))+1,cid,valor,taxa,data:f.data.value,vencimento:nextDue(f.data.value),quitado:false});save()}function pay(id){let e=db.emprestimos.find(x=>x.id===id);if(!e||e.quitado)return;let j=juros(e),m=multa(e);if(!confirm(`Confirmar recebimento de ${money(j+m)}?\nJuros: ${money(j)}\nEncargo: ${money(m)}\nO principal de ${money(e.valor)} permanece devido.`))return;db.pagamentos.push({eid:e.id,cid:e.cid,juros:j,multa:m,data:today()});e.vencimento=nextDue(e.vencimento);save()}function settle(id){let e=db.emprestimos.find(x=>x.id===id);if(confirm(`Confirmar recebimento do principal de ${money(e.valor)} e quitação do empréstimo Nº ${String(e.id).padStart(3,'0')}?\nVerifique juros pendentes separadamente.`)){e.quitado=true;save()}}function whatsapp(id){let e=db.emprestimos.find(x=>x.id===id);let t=`Olá, ${get(e.cid).nome}!\nEmpréstimo Nº ${String(e.id).padStart(3,'0')}\nData do empréstimo: ${date(e.data)}\nValor emprestado: ${money(e.valor)}\nVencimento dos juros: ${date(e.vencimento)}\nJuros mensais: ${money(juros(e))}\nDias de atraso: ${atraso(e)}\nEncargos simulados: ${money(multa(e))}\nTotal: ${money(juros(e)+multa(e))}\nCaso já tenha pago, favor enviar comprovante.`;window.open('https://wa.me/?text='+encodeURIComponent(t),'_blank')}function exportDemo(){const blob=new Blob([JSON.stringify({versao:'CredMaster demonstracao 2',exportadoEm:new Date().toISOString(),dados:db},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='credmaster-teste-'+today()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}function reset(){if(confirm('Apagar todos os dados de teste deste navegador?')){db=init();save()}}render();
  </script>
 
-<section id="credmaster-login" class="card" style="max-width: 420px; margin: 16px auto;">
+<style>
+  main:not([data-credmaster-autorizado]) { display: none !important; }
+  #credmaster-login { max-width: 420px; margin: 24px auto; }
+  #credmaster-login button { margin-top: 12px; }
+  #credmaster-sair { display: block; margin: 12px auto; }
+  #credmaster-sair[hidden] { display: none; }
+</style>
+
+<section id="credmaster-login" class="card">
   <h2>Entrar no CredMaster</h2>
   <form id="credmaster-form">
     <label for="credmaster-email">E-mail</label>
     <input id="credmaster-email" type="email" autocomplete="username" required>
 
     <label for="credmaster-senha">Senha</label>
-    <input id="credmaster-senha" type="password" autocomplete="current-password" required>
+    <input id="credmaster-senha" type="password"
+      autocomplete="current-password" required>
 
-    <button id="credmaster-entrar" type="submit" style="margin-top: 12px;" disabled>
-      Entrar
-    </button>
+    <button id="credmaster-entrar" type="submit" disabled>Entrar</button>
   </form>
-  <p id="credmaster-mensagem" role="status">Carregando o login…</p>
+  <p id="credmaster-mensagem" role="status">Carregando login…</p>
 </section>
 
-<script>
-  document.querySelector("main").hidden = true;
-</script>
+<button id="credmaster-sair" type="button" hidden>Sair</button>
 
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-app.js";
-  import {
-    browserSessionPersistence,
-    initializeAuth,
-    onAuthStateChanged,
-    signInWithEmailAndPassword,
-    signOut
-  } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-auth.js";
-
-  const app = initializeApp({
+  const uidAutorizado = "EVKdQFXbYNXprvnhX6zyDRZOemE3";
+  const firebaseConfig = {
     apiKey: "AIzaSyBABu6lN9Mwr5gizgXEA5WCMkXgcPD0YZY",
     authDomain: "credmaster-476d5.firebaseapp.com",
     projectId: "credmaster-476d5",
+    appId: "1:115740048120:web:542f876e634cff2861990d"
+  };
+
+  const painel = document.querySelector("main");
+  const login = document.getElementById("credmaster-login");
+  const formulario = document.getElementById("credmaster-form");
+  const email = document.getElementById("credmaster-email");
+  const senha = document.getElementById("credmaster-senha");
+  const entrar = document.getElementById("credmaster-entrar");
+  const sair = document.getElementById("credmaster-sair");
+  const mensagem = document.getElementById("credmaster-mensagem");
+
+  try {
+    const [{ initializeApp }, {
+      initializeAuth,
+      browserSessionPersistence,
+      onAuthStateChanged,
+      signInWithEmailAndPassword,
+      signOut
+    }] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js")
+    ]);
+
+    const auth = initializeAuth(initializeApp(firebaseConfig), {
+      persistence: browserSessionPersistence
+    });
+
+    onAuthStateChanged(auth, usuario => {
+      const autorizado = usuario?.uid === uidAutorizado;
+      painel.toggleAttribute("data-credmaster-autorizado", autorizado);
+      login.hidden = autorizado;
+      sair.hidden = !autorizado;
+      entrar.disabled = Boolean(usuario);
+
+      if (usuario && !autorizado) {
+        mensagem.textContent = "Esta conta não tem acesso ao CredMaster.";
+        signOut(auth).catch(() => {
+          mensagem.textContent = "Acesso bloqueado. Feche esta aba.";
+        });
+      } else if (mensagem.textContent === "Carregando login…") {
+        mensagem.textContent = "";
+      }
+    });
+
+    formulario.addEventListener("submit", async evento => {
+      evento.preventDefault();
+      if (entrar.disabled) return;
+
+      entrar.disabled = true;
+      mensagem.textContent = "Entrando…";
+
+      try {
+        const { user } = await signInWithEmailAndPassword(
+          auth, email.value.trim(), senha.value
+        );
+        if (user.uid === uidAutorizado) mensagem.textContent = "";
+      } catch (erro) {
+        mensagem.textContent = erro.code === "auth/network-request-failed"
+          ? "Falha de conexão. Tente novamente."
+          : "Não foi possível entrar. Confira seu e-mail e sua senha.";
+      } finally {
+        senha.value = "";
+        entrar.disabled = Boolean(auth.currentUser);
+      }
+    });
+
+    sair.addEventListener("click", async () => {
+      try {
+        await signOut(auth);
+        mensagem.textContent = "Você saiu do CredMaster.";
+      } catch {
+        alert("Não foi possível sair. Feche esta aba para encerrar a sessão.");
+      }
+    });
+  } catch {
+    mensagem.textContent = "O login não carregou. Atualize a página e tente novamente.";
+  }
+</script>
+</body></html>
