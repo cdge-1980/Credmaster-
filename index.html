@@ -223,6 +223,7 @@
           ${client.documento ? `<p>Documento ${escapeHtml(client.documento)}</p>` : ""}
           ${client.endereco ? `<p>Endereço ${escapeHtml(client.endereco)}</p>` : ""}
           ${action("Editar cadastro", "edit-client", client.id)}
+          ${action("Apagar cliente", "delete-client", client.id, "red")}
           ${clientFiles(client)}
         `}
         ${client.status === "pendente" ? `<div class="actions">
@@ -674,6 +675,7 @@
       if (!button || !records || saving) return;
       const { action: name, id } = button.dataset;
       const number = Number(id);
+      if (name === "delete-client") return deleteClient(number);
       if (name === "clear-tests") {
         if (!session) return;
       if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s) e seus documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
@@ -790,6 +792,70 @@
       });
     } catch {
       loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
+    }
+
+    async function deleteClient(clientId) {
+      if (!records || !session || saving) return;
+      const client = records.clientes.find(item => item.id === clientId);
+      if (!client) return;
+      const countLoans = records.emprestimos.filter(item => item.cid === clientId).length;
+      if (!confirm(`Apagar definitivamente ${client.nome}?\n\nSerão excluídos os documentos, ${countLoans} empréstimo(s) e todo o histórico de pagamentos deste cliente, inclusive dívidas em aberto. Os outros clientes serão mantidos.\n\nBaixe uma cópia dos dados antes se precisar guardar o histórico.`)) return;
+      if (prompt(`Para confirmar a exclusão de ${client.nome}, digite: APAGAR CLIENTE`) !== "APAGAR CLIENTE") return;
+      const current = session;
+      const revision = records.revision;
+      saving = true;
+      view.inert = true;
+      setStatus("Apagando o cliente… Aguarde a confirmação.");
+      try {
+        const next = await cloud.runTransaction(cloud.instance, async transaction => {
+          const snapshot = await transaction.get(current.ref);
+          const latest = snapshot.exists() ? snapshot.data() : emptyState();
+          if (latest.revision !== revision) throw new Error("STALE");
+          for (const client of latest.clientes.filter(item => item.id === clientId)) {
+            for (const kind of Object.keys(documentTypes)) {
+              const manifest = cloud.doc(current.ref, "anexos", `${client.id}-${kind}`);
+              for (let index = 0; index < maxParts; index++) {
+                transaction.delete(cloud.doc(manifest, "partes", String(index)));
+              }
+              transaction.delete(manifest);
+            }
+          }
+          if (!latest.clientes.some(item => item.id === clientId)) throw new Error("STALE");
+          const loanIds = new Set(latest.emprestimos.filter(item => item.cid === clientId).map(item => item.id));
+          const cleared = {
+            ...latest,
+            clientes: latest.clientes.filter(item => item.id !== clientId),
+            emprestimos: latest.emprestimos.filter(item => item.cid !== clientId),
+            pagamentos: latest.pagamentos.filter(item => item.cid !== clientId && !loanIds.has(item.eid)),
+            revision: latest.revision + 1
+          };
+          transaction.set(current.ref, cleared);
+          return cleared;
+        });
+        if (session !== current) return;
+        // Preserve a newer snapshot if another device has already added data.
+        if (!records || records.revision <= next.revision) records = next;
+        clientFilter = "";
+        reportClient = 0;
+        paymentLoan = 0;
+        activeClientEdit = 0;
+        currentTab = "clientes";
+        setStatus("Cliente e seus documentos, empréstimos e pagamentos apagados.");
+      } catch (error) {
+        if (session !== current) return;
+        setStatus(error.message === "STALE"
+          ? "Os dados mudaram em outra aba ou aparelho. Nenhum dado foi apagado por esta operação. Confira e tente novamente."
+          : error.code === "permission-denied"
+          ? "A exclusão foi recusada. Nenhum dado foi apagado. Publique as regras atualizadas de exclusão dos anexos."
+          : "Não foi possível confirmar a exclusão. Confira a conexão e os registros antes de repetir.", true);
+      } finally {
+        if (session === current) {
+          saving = false;
+          view.inert = false;
+          view.replaceChildren();
+          render();
+        }
+      }
     }
 
     async function clearTestData(fields) {
