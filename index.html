@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -137,6 +138,7 @@
     let paymentLoan = 0;
     let activeClientEdit = 0;
     let activeClientDelete = 0;
+    let showArchivedClients = false;
 
     function dueDate(start, monthOffset) {
       const [year, month, day] = start.split("-").map(Number);
@@ -213,20 +215,27 @@
     }
 
     function clients() {
-      return deleteConfirmation() + card("Localizar cliente", `
+      return deleteConfirmation() + card(showArchivedClients ? "Clientes arquivados" : "Localizar cliente", `
+        <p>Clientes arquivados mantêm os documentos e todo o histórico. Restaure o cadastro para fazer um novo empréstimo.</p>
+        ${action(showArchivedClients ? "Voltar aos clientes ativos" : "Ver clientes arquivados", "toggle-archived-clients", 0)}
         <form data-form="search">
           <label for="search-client">Nome ou número do documento</label>
           <input id="search-client" name="busca" value="${escapeHtml(clientFilter)}">
           <button>Buscar</button>
           <button class="secondary" type="button" data-action="clear-search">Limpar</button>
         </form>`) + card("Novo cadastro para análise", clientForm())
-        + (records.clientes.filter(matchesClient).map(client => card(escapeHtml(client.nome), `
-        <p class="${client.status === "aprovado" ? "good" : "danger"}">${escapeHtml(client.status.toUpperCase())}</p>
+        + (records.clientes.filter(client => Boolean(client.arquivado) === showArchivedClients).filter(matchesClient).map(client => card(escapeHtml(client.nome), `
+        <p class="${client.status === "aprovado" ? "good" : "danger"}">${client.arquivado ? "ARQUIVADO · " : ""}${escapeHtml(client.status.toUpperCase())}</p>
         ${activeClientEdit === client.id ? clientForm(client) : `
           ${client.documento ? `<p>Documento ${escapeHtml(client.documento)}</p>` : ""}
           ${client.endereco ? `<p>Endereço ${escapeHtml(client.endereco)}</p>` : ""}
+          ${client.arquivado ? action("Restaurar cliente", "restore-client", client.id, "green")
+            : !records.emprestimos.some(loan => loan.cid === client.id && active(loan))
+              ? action("Arquivar cliente quitado", "archive-client", client.id) : ""}
           ${action("Editar cadastro", "edit-client", client.id)}
-          ${action("Apagar cliente", "delete-client", client.id, "red")}
+          ${records.emprestimos.some(loan => loan.cid === client.id && active(loan))
+            ? '<p class="muted">Quite os empréstimos em aberto para apagar este cliente.</p>'
+            : action("Apagar cliente", "delete-client", client.id, "red")}
           ${clientFiles(client)}
         `}
         ${client.status === "pendente" ? `<div class="actions">
@@ -242,7 +251,7 @@
       return card("Confirmar exclusão do cliente", `
         <form data-form="delete-client" data-id="${client.id}">
           <p class="danger">Apagar definitivamente ${escapeHtml(client.nome)}?</p>
-          <p>Serão excluídos os documentos, ${loans.length} empréstimo(s) e todo o histórico de pagamentos deste cliente, inclusive dívidas em aberto. Os outros clientes serão mantidos.</p>
+          <p>Serão excluídos os documentos, ${loans.length} empréstimo(s) e todo o histórico de pagamentos deste cliente.</p>
           <p>Baixe uma cópia dos dados e os documentos antes se precisar guardar o histórico.</p>
           <label for="delete-confirmation">Digite APAGAR CLIENTE para confirmar</label>
           <input id="delete-confirmation" name="confirmacao" autocomplete="off" autocorrect="off" spellcheck="false" required>
@@ -279,7 +288,7 @@
     }
 
     function newLoan() {
-      const options = records.clientes.filter(client => client.status === "aprovado")
+      const options = records.clientes.filter(client => client.status === "aprovado" && !client.arquivado)
         .map(client => `<option value="${client.id}">${escapeHtml(client.nome)}</option>`).join("");
       return card("Cadastrar empréstimo", `
         <form data-form="loan">
@@ -339,13 +348,47 @@
       </form>`;
     }
 
+    function monthlyStatement(loan, transactions, day) {
+      const receipts = new Map();
+      for (const payment of transactions) {
+        if (payment.principal) continue;
+        const cycle = receipts.get(payment.vencimento) ?? [];
+        cycle.push(payment);
+        receipts.set(payment.vencimento, cycle);
+      }
+
+      const monthlyInterest = interest(loan);
+      const rows = [];
+      for (let month = 1; ; month++) {
+        const due = month === loan.mesVencimento ? loan.vencimento : dueDate(loan.data, month);
+        const cycle = receipts.get(due) ?? [];
+        if (loan.quitado && (month > loan.mesVencimento || (month === loan.mesVencimento && !cycle.length))) break;
+        const paidInterest = sum(cycle, "juros");
+        const paidPenalty = sum(cycle, "multa");
+        const paid = month < loan.mesVencimento;
+        const status = paid ? "Pago" : loan.quitado ? "Encerrado na quitação"
+          : due < day ? "Em atraso" : due === day ? "Vence hoje" : "A vencer";
+        const waived = cycle.some(payment => payment.multaDispensada)
+          || (month === loan.mesVencimento && penaltyWaived(loan));
+        const balance = month === loan.mesVencimento ? cycleBalance(loan, day, cycle)
+          : { juros: monthlyInterest, multa: penalty(due, day) };
+        rows.push(`<article><p><strong>${displayDate(due)} · ${status}</strong><br>
+          Juros previstos ${money(monthlyInterest)} · Juros recebidos ${money(paidInterest)}<br>
+          Multa recebida ${money(paidPenalty)}${waived ? " · Multa dispensada" : ""}
+          ${paid || loan.quitado ? "" : `<br>Juros em aberto ${money(balance.juros)} · Multa em aberto ${money(balance.multa)}`}</p></article>`);
+        if (month >= loan.mesVencimento && due > day) break;
+      }
+      return `<details><summary>Vencimentos mês a mês</summary>
+        ${rows.join("") || '<p>Nenhum vencimento mensal concluído.</p>'}</details>`;
+    }
+
     function reports() {
       const day = today();
       const loans = records.emprestimos.filter(loan => !reportClient || loan.cid === reportClient);
       const transactions = records.pagamentos.filter(payment => !reportClient || payment.cid === reportClient);
       const payments = [...transactions].sort((a, b) => b.data.localeCompare(a.data)).map(payment => `<article>
         <p><strong>${escapeHtml(clientName(payment.cid))}</strong> · nº ${loanNumber(payment.eid)}<br>
-          Recebido em ${displayDate(payment.data)}<br>
+          Recebido em ${displayDate(payment.data)}${!payment.principal && payment.vencimento ? ` · Vencimento ${displayDate(payment.vencimento)}` : ""}<br>
           Juros ${money(payment.juros)} · Encargos ${money(payment.multa)} · Principal ${money(payment.principal)}
           ${payment.multaDispensada ? `<br>Multa dispensada neste vencimento · ${payment.diasAtraso ?? 0} dia(s) de atraso na data do pagamento` : ""}</p>
       </article>`).join("");
@@ -356,11 +399,14 @@
           <p>Valor emprestado <strong>${money(sum(loans, "principal"))}</strong></p>
           <p>Juros recebidos <strong>${money(sum(transactions, "juros"))}</strong></p>
           <p>Encargos recebidos <strong>${money(sum(transactions, "multa"))}</strong></p>
-          <p>Principal em aberto <strong>${money(sum(loans.filter(active), "principal"))}</strong></p>`)
-        + (loans.length ? card("Situação dos empréstimos", loans.map(loan => `<p>
+          <p>Principal em aberto <strong>${money(sum(loans.filter(active), "principal"))}</strong></p>
+          <p>Principal recebido <strong>${money(sum(transactions, "principal"))}</strong></p>
+          <p>Total recebido <strong>${money(sum(transactions, "juros") + sum(transactions, "multa") + sum(transactions, "principal"))}</strong></p>`)
+        + (loans.length ? card("Situação dos empréstimos", loans.map(loan => `<article><p>
           <strong>${escapeHtml(clientName(loan.cid))} · nº ${loanNumber(loan.id)}</strong><br>
           Meses pagos ${Math.max(0, loan.mesVencimento - 1)} ·
-          ${active(loan) ? `${lateDays(loan.vencimento, day)} dia(s) em atraso · Multa: ${penaltyWaived(loan) ? "dispensada neste vencimento" : "cobrar"}` : "Quitado"}</p>`).join("")) : "")
+          ${active(loan) ? `${lateDays(loan.vencimento, day)} dia(s) em atraso · Multa: ${penaltyWaived(loan) ? "dispensada neste vencimento" : "cobrar"}` : "Quitado"}</p>
+          ${monthlyStatement(loan, transactions.filter(payment => payment.eid === loan.id), day)}</article>`).join("")) : "")
         + card("Histórico de pagamentos", payments || "<p>Sem pagamentos registrados.</p>");
     }
 
@@ -416,6 +462,7 @@
       if (!current || saving) return;
       const refs = attachmentRefs(current, clientId, kind);
       if (!refs) return;
+      const revision = records.revision;
       if (file && (!file.size || file.size > partSize * maxParts)) {
         return setStatus("Escolha um arquivo de até 3 MB.", true);
       }
@@ -431,6 +478,10 @@
           const count = Math.ceil(bytes.length / partSize);
           const extension = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" }[type];
           await cloud.runTransaction(cloud.instance, async transaction => {
+            const clientState = (await transaction.get(current.ref)).data();
+            if (clientState?.revision !== revision || !clientState.clientes.some(client => client.id === clientId)) {
+              throw new Error("STALE");
+            }
             const previous = storedPartCount(await transaction.get(refs.manifest));
             for (let index = 0; index < count; index++) {
               const data = cloud.Bytes.fromUint8Array(bytes.subarray(index * partSize, (index + 1) * partSize));
@@ -457,7 +508,9 @@
           setStatus("Documento baixado.");
         }
       } catch (error) {
-        if (session === current) setStatus(error.code === "permission-denied"
+        if (session === current) setStatus(error.message === "STALE"
+          ? "O cadastro mudou em outra aba ou aparelho. Confira o cliente antes de enviar novamente."
+          : error.code === "permission-denied"
           ? "O Firestore recusou o acesso ao documento. Confira as regras para anexos."
           : "Não foi possível concluir a operação com o documento.", true);
       } finally {
@@ -487,6 +540,7 @@
       reportClient = 0;
       activeClientEdit = 0;
       activeClientDelete = 0;
+      showArchivedClients = false;
       paymentLoan = 0;
       saving = false;
       const authorized = user?.uid === ownerUid;
@@ -623,7 +677,7 @@
       const taxa = Math.round(Number(fields.get("taxa")) * 100);
       const data = fields.get("data");
       const client = records.clientes.find(item => item.id === cid);
-      if (client?.status !== "aprovado" || !Number.isSafeInteger(principal * 10_000) || principal <= 0
+      if (client?.status !== "aprovado" || client.arquivado || !Number.isSafeInteger(principal * 10_000) || principal <= 0
           || !Number.isInteger(taxa) || taxa < 0 || taxa > 10_000 || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
         return setStatus("Confira os dados do empréstimo.", true);
       }
@@ -699,11 +753,48 @@
       }
     });
 
+    async function archiveClient(clientId, archived) {
+      if (!records || !session || saving) return;
+      const client = records.clientes.find(item => item.id === clientId);
+      if (!client) return;
+      if (archived && records.emprestimos.some(loan => loan.cid === clientId && active(loan))) {
+        return setStatus("Este cliente tem empréstimo em aberto. Quite todos os empréstimos antes de arquivar.", true);
+      }
+      const saved = await save(next => {
+        const target = next.clientes.find(item => item.id === clientId);
+        if (!target || (archived && next.emprestimos.some(loan => loan.cid === clientId && active(loan)))) {
+          throw new Error("STALE");
+        }
+        target.arquivado = archived;
+      });
+      if (saved) {
+        activeClientEdit = 0;
+        activeClientDelete = 0;
+        setStatus(archived
+          ? "Cliente arquivado. Consulte em Ver clientes arquivados. Os documentos e pagamentos foram mantidos."
+          : "Cliente restaurado. Ele aparece novamente entre os clientes ativos.");
+        view.replaceChildren();
+        render();
+        status.scrollIntoView({ block: "center" });
+      }
+    }
+
     view.addEventListener("click", event => {
       const button = event.target.closest("[data-action]");
       if (!button || !records || saving) return;
       const { action: name, id } = button.dataset;
       const number = Number(id);
+      if (name === "toggle-archived-clients") {
+        showArchivedClients = !showArchivedClients;
+        activeClientEdit = 0;
+        activeClientDelete = 0;
+        clientFilter = "";
+        view.replaceChildren();
+        return render();
+      }
+      if (name === "archive-client" || name === "restore-client") {
+        return archiveClient(number, name === "archive-client");
+      }
       if (name === "delete-client" || name === "cancel-delete-client") {
         activeClientDelete = name === "delete-client" ? number : 0;
         view.replaceChildren();
@@ -848,6 +939,9 @@
       if (!records || !session || saving) return;
       const client = records.clientes.find(item => item.id === clientId);
       if (!client) return;
+      if (records.emprestimos.some(loan => loan.cid === clientId && active(loan))) {
+        return setStatus("Quite os empréstimos em aberto antes de apagar este cliente.", true);
+      }
       if (String(confirmation ?? "").trim().replace(/\s+/g, " ").toUpperCase() !== "APAGAR CLIENTE") {
         const message = "Digite APAGAR CLIENTE no campo e toque em Confirmar exclusão. Nenhum dado foi apagado.";
         const error = document.querySelector("#delete-error");
@@ -864,17 +958,19 @@
         const next = await cloud.runTransaction(cloud.instance, async transaction => {
           const snapshot = await transaction.get(current.ref);
           const latest = snapshot.exists() ? snapshot.data() : emptyState();
-          if (latest.revision !== revision) throw new Error("STALE");
-          for (const client of latest.clientes.filter(item => item.id === clientId)) {
-            for (const kind of Object.keys(documentTypes)) {
-              const manifest = cloud.doc(current.ref, "anexos", `${client.id}-${kind}`);
-              for (let index = 0; index < maxParts; index++) {
-                transaction.delete(cloud.doc(manifest, "partes", String(index)));
-              }
-              transaction.delete(manifest);
+          if (latest.revision !== revision || !latest.clientes.some(item => item.id === clientId)
+              || latest.emprestimos.some(loan => loan.cid === clientId && active(loan))) throw new Error("STALE");
+          const documents = await Promise.all(Object.keys(documentTypes).map(async kind => {
+            const manifest = cloud.doc(current.ref, "anexos", `${clientId}-${kind}`);
+            return { manifest, count: storedPartCount(await transaction.get(manifest)) };
+          }));
+          for (const { manifest, count } of documents) {
+            if (count === 0) continue;
+            for (let index = 0; index < count; index++) {
+              transaction.delete(cloud.doc(manifest, "partes", String(index)));
             }
+            transaction.delete(manifest);
           }
-          if (!latest.clientes.some(item => item.id === clientId)) throw new Error("STALE");
           const loanIds = new Set(latest.emprestimos.filter(item => item.cid === clientId).map(item => item.id));
           const cleared = {
             ...latest,
@@ -900,6 +996,8 @@
         if (session !== current) return;
         setStatus(error.message === "STALE"
           ? "Os dados mudaram em outra aba ou aparelho. Nenhum dado foi apagado por esta operação. Confira e tente novamente."
+          : error.message === "INVALID_ATTACHMENT"
+          ? "Um documento deste cliente precisa ser conferido antes da exclusão."
           : error.code === "permission-denied"
           ? "A exclusão foi recusada. Nenhum dado foi apagado. Publique as regras atualizadas de exclusão dos anexos."
           : "Não foi possível confirmar a exclusão. Confira a conexão e os registros antes de repetir.", true);
