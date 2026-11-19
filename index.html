@@ -118,9 +118,11 @@
       `<button type="button" class="${style}" data-action="${name}" data-id="${id}">${label}</button>`;
     const active = loan => !loan.quitado;
     const validPrincipal = principal => Number.isSafeInteger(principal * 10_000) && principal > 0;
-    const canEditPrincipal = (loan, state = records) => active(loan)
-      && !state.pagamentos.some(payment => payment.eid === loan.id);
     const interest = loan => Math.round(loan.principal * loan.taxa / 10_000);
+    const currentInterest = loan => loan.jurosFixadosNoVencimento ?? interest(loan);
+    const hasCurrentPayment = (loan, payments = records.pagamentos) =>
+      payments.some(payment => payment.eid === loan.id && payment.vencimento === loan.vencimento
+        && !payment.principal);
     const lateDays = (due, day) => Math.max(0, (Date.parse(day) - Date.parse(due)) / 86_400_000);
     const penalty = (due, day) => lateDays(due, day) * 1000;
     const sum = (items, field) => items.reduce((total, item) => total + item[field], 0);
@@ -168,8 +170,7 @@
     function cycleBalance(loan, date, payments = records.pagamentos) {
       const cycle = payments.filter(payment => payment.eid === loan.id
         && payment.vencimento === loan.vencimento && !payment.principal);
-      const monthlyInterest = interest(loan);
-      const pendingInterest = Math.max(0, monthlyInterest - sum(cycle, "juros"));
+      const pendingInterest = Math.max(0, currentInterest(loan) - sum(cycle, "juros"));
       const lastPayment = cycle.reduce((last, payment) => payment.data > last ? payment.data : last, "");
       const lastInterest = cycle.reduce((last, payment) => payment.juros && payment.data > last ? payment.data : last, "");
       const penaltyDate = pendingInterest === 0 && lastInterest ? lastInterest : date;
@@ -314,21 +315,23 @@
         <p>Juros mensais de ${(loan.taxa / 100).toLocaleString("pt-BR")}% · ${money(interest(loan))}</p>
         <p class="${loan.quitado ? "good" : "muted"}">${loan.quitado ? "QUITADO" : "ATIVO"}</p>
         ${loan.quitado ? "" : `<p>Próximo vencimento ${displayDate(loan.vencimento)}</p>
+          ${loan.jurosFixadosNoVencimento == null ? "" : `<p class="muted">Juros deste vencimento ${money(currentInterest(loan))}</p>`}
           ${principalEditor(loan)}
           ${action("Quitar principal", "settle", loan.id)}`}`)).join("")
         || card("Empréstimos", "<p>Nenhum empréstimo cadastrado.</p>");
     }
 
     function principalEditor(loan) {
-      if (!canEditPrincipal(loan)) {
-        return '<p class="muted">Este empréstimo tem pagamentos registrados. A edição do valor está indisponível.</p>';
-      }
       if (principalEdit?.id !== loan.id) return action("Editar valor", "edit-principal", loan.id);
+      const keepsCurrentInterest = hasCurrentPayment(loan);
+      const effectiveDate = keepsCurrentInterest ? dueDate(loan.data, loan.mesVencimento + 1) : loan.vencimento;
       return `<form data-form="edit-principal" data-id="${loan.id}">
         <label for="corrected-principal">Valor principal correto (R$)</label>
         <input id="corrected-principal" name="principal" type="number" min="0.01" step="0.01"
           value="${(loan.principal / 100).toFixed(2)}" required>
-        <p class="muted">O CredMaster recalcula os juros com a taxa e as datas do empréstimo.</p>
+        <p class="muted">Os pagamentos lançados serão mantidos.
+          ${keepsCurrentInterest ? `Os juros de ${displayDate(loan.vencimento)} permanecem em ${money(currentInterest(loan))}, pois já houve pagamento nesse vencimento. ` : ""}
+          O novo valor será usado para calcular os juros a partir do vencimento de ${displayDate(effectiveDate)}.</p>
         <div class="actions">
           <button type="submit" class="green">Salvar valor</button>
           ${action("Cancelar", "cancel-principal-edit", loan.id)}
@@ -378,7 +381,6 @@
         receipts.set(payment.vencimento, cycle);
       }
 
-      const monthlyInterest = interest(loan);
       const rows = [];
       for (let month = 1; ; month++) {
         const due = month === loan.mesVencimento ? loan.vencimento : dueDate(loan.data, month);
@@ -387,6 +389,8 @@
         const paidInterest = sum(cycle, "juros");
         const paidPenalty = sum(cycle, "multa");
         const paid = month < loan.mesVencimento;
+        const monthlyInterest = paid ? paidInterest : month === loan.mesVencimento
+          ? currentInterest(loan) : interest(loan);
         const status = paid ? "Pago" : loan.quitado ? "Encerrado na quitação"
           : due < day ? "Em atraso" : due === day ? "Vence hoje" : "A vencer";
         const waived = cycle.some(payment => payment.multaDispensada)
@@ -716,7 +720,8 @@
       if (!validPrincipal(principal)) return setStatus("Informe um valor principal válido, maior que zero.", true);
       const loan = records.emprestimos.find(item => item.id === id);
       const edit = principalEdit;
-      if (!loan || !canEditPrincipal(loan) || edit?.id !== id || loan.principal !== edit.original) {
+      if (!loan || !active(loan) || edit?.id !== id || loan.principal !== edit.original
+          || loan.vencimento !== edit.due || hasCurrentPayment(loan) !== edit.keepsCurrentInterest) {
         principalEdit = undefined;
         view.replaceChildren();
         render();
@@ -730,7 +735,8 @@
       }
       const saved = await save(next => {
         const target = next.emprestimos.find(item => item.id === id);
-        if (!target || !canEditPrincipal(target, next) || target.principal !== edit.original) throw new Error("STALE");
+        if (!target || !active(target) || target.principal !== edit.original) throw new Error("STALE");
+        if (hasCurrentPayment(target, next.pagamentos)) target.jurosFixadosNoVencimento = currentInterest(target);
         target.principal = principal;
       });
       if (!saved) return;
@@ -762,6 +768,7 @@
         if (complete) {
           target.mesVencimento++;
           target.vencimento = dueDate(target.data, target.mesVencimento);
+          delete target.jurosFixadosNoVencimento;
         }
       });
       if (saved) {
@@ -886,8 +893,9 @@
       const loan = records.emprestimos.find(item => item.id === number);
       if (!loan || loan.quitado) return;
       if (name === "edit-principal" || name === "cancel-principal-edit") {
-        if (name === "edit-principal" && !canEditPrincipal(loan)) return;
-        principalEdit = name === "edit-principal" ? { id: loan.id, original: loan.principal } : undefined;
+        principalEdit = name === "edit-principal" ? {
+          id: loan.id, original: loan.principal, due: loan.vencimento, keepsCurrentInterest: hasCurrentPayment(loan)
+        } : undefined;
         view.replaceChildren();
         render();
         view.querySelector("#corrected-principal")?.focus();
