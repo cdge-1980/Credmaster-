@@ -17,8 +17,8 @@
     small { opacity: .85; }
     main, #login { max-width: 680px; margin: auto; padding: 15px; }
     #login { max-width: 420px; margin-top: 18px; }
-    nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 15px; }
-    nav button { font-size: 13px; padding: 11px 4px; }
+    nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
+    nav button { font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
     button { border: 0; border-radius: 10px; padding: 12px; background: #173568; color: white; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
     .secondary { background: #e7edf7; color: #173568; }
@@ -43,6 +43,9 @@
     #status { margin: 0 0 12px; }
     #logout { margin-bottom: 15px; }
     article + article { border-top: 1px solid #e8edf4; }
+    .balance-actions { display: grid; gap: 12px; }
+    .balance-actions summary { cursor: pointer; font-weight: 650; }
+    .balance-history { padding-inline-start: 22px; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -71,6 +74,9 @@
       <button type="button" data-tab="cobrancas">Cobranças</button>
       <button type="button" data-tab="relatorios">Relatórios</button>
       <button type="button" data-tab="dados">Dados</button>
+      <button type="button" data-tab="saldos">Saldo devedor</button>
+      <button type="button" data-tab="injecao">Valores em aberto Injeção MinasMolde</button>
+      <button type="button" data-tab="ferramentaria">Valores em aberto Ferramentaria MinasMolde</button>
     </nav>
     <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
       <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
@@ -103,7 +109,7 @@
     const overdueList = document.querySelector("#overdue-list");
     const status = document.querySelector("#status");
     const view = document.querySelector("#view");
-    const emptyState = () => ({ revision: 0, clientes: [], emprestimos: [], pagamentos: [] });
+    const emptyState = () => ({ revision: 0, clientes: [], emprestimos: [], pagamentos: [], movimentosSaldo: [] });
     const formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
     const money = cents => formatter.format(cents / 100);
     const localDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" });
@@ -130,6 +136,16 @@
     const documentTypes = { identidade: "Foto do documento", endereco: "Comprovante de endereço", renda: "Contracheque" };
     const partSize = 512 * 1024;
     const maxParts = 6;
+    const balanceTitles = {
+      saldos: "Entrada de dívida",
+      injecao: "Valores em aberto Injeção MinasMolde",
+      ferramentaria: "Valores em aberto Ferramentaria MinasMolde"
+    };
+    const movementLabels = {
+      entrada: "Entrada de dívida",
+      recebimento: "Pagamento recebido",
+      abatimento: "Abatimento"
+    };
 
     let auth;
     let cloud;
@@ -142,6 +158,7 @@
     let paymentLoan = 0;
     let activeClientEdit = 0;
     let principalEdit;
+    let receivedInterestEdit;
     let activeClientDelete = 0;
     let showArchivedClients = false;
 
@@ -214,8 +231,116 @@
       });
       const hasDraft = view.contains(document.activeElement) && document.activeElement.matches("input, select");
       if (hasDraft) return;
-      const pages = { novo: newLoan, clientes: clients, emprestimos: loans, cobrancas: charges, relatorios: reports, dados: dataPage };
-      view.innerHTML = pages[currentTab]();
+      const pages = { novo: newLoan, clientes: clients, emprestimos: loans, cobrancas: charges,
+        relatorios: reports, dados: dataPage };
+      view.innerHTML = Object.hasOwn(balanceTitles, currentTab) ? balances(currentTab) : pages[currentTab]();
+    }
+
+    const clientMovements = (state, clientId, sector) =>
+      (state.movimentosSaldo ?? []).filter(movement => movement.cid === clientId
+        && (sector === undefined || (movement.setor ?? "saldos") === sector));
+    const debtBalance = movements => movements.reduce((balance, movement) =>
+      balance + (movement.tipo === "entrada" ? movement.valor : -movement.valor), 0);
+    const hasOpenDebt = (state, clientId) => debtBalance(clientMovements(state, clientId)) > 0;
+    const hasOpenBalance = (state, clientId) => hasOpenDebt(state, clientId)
+      || state.emprestimos.some(loan => loan.cid === clientId && active(loan));
+
+    function balanceAmountField(id, label) {
+      return `<label for="${id}">${label} (R$)</label>
+        <input id="${id}" name="valor" inputmode="decimal" maxlength="18" placeholder="0,00" required>`;
+    }
+
+    function balances(sector) {
+      const available = records.clientes.filter(client => !client.arquivado)
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+      const options = available.map(client => `<option value="${client.id}">${escapeHtml(client.nome)}
+        ${client.documento ? ` · ${escapeHtml(client.documento)}` : ` · Cadastro nº ${client.id}`}</option>`).join("");
+      const entries = card(balanceTitles[sector], `
+        ${sector === "saldos" ? '<p class="muted">Lance aqui os saldos que deseja controlar manualmente. Para pagar juros ou quitar um empréstimo cadastrado, use Cobranças.</p>' : ""}
+        <form data-form="debt-entry">
+          <label for="debt-client">Cliente</label>
+          <select id="debt-client" name="cid" required>
+            <option value="">Selecione o cliente</option>
+            ${options}
+            <option value="new">Cadastrar novo nome</option>
+          </select>
+          <div id="debt-new-client" hidden>
+            <label for="debt-name">Nome do cliente</label>
+            <input id="debt-name" name="nome" maxlength="120" disabled>
+          </div>
+          ${balanceAmountField("debt-entry-value", "Valor da dívida")}
+          <button type="submit">Registrar entrada</button>
+        </form>`);
+      const reductions = sector === "saldos"
+        ? [{ type: "abatimento", title: "Abater pagamento", label: "Valor recebido", submit: "Registrar abatimento" }]
+        : [
+          { type: "recebimento", title: "Receber pagamento", label: "Valor recebido", submit: "Registrar recebimento" },
+          { type: "abatimento", title: "Registrar abatimento", label: "Valor do desconto ou crédito", submit: "Confirmar abatimento" }
+        ];
+      const clientCards = records.clientes.map(client => {
+        const movements = clientMovements(records, client.id, sector);
+        return { client, movements, balance: debtBalance(movements) };
+      }).filter(item => item.movements.length)
+        .sort((a, b) => Number(b.balance > 0) - Number(a.balance > 0)
+          || a.client.nome.localeCompare(b.client.nome, "pt-BR"))
+        .map(({ client, movements, balance }) => card(escapeHtml(client.nome), `
+          <p class="${balance > 0 ? "danger" : "good"}">${balance > 0 ? "Saldo devedor" : "Quitado"}
+            <strong>${money(balance)}</strong></p>
+          <div class="balance-actions">
+            ${balance > 0 ? reductions.map(({ type, title, label, submit }) => `<details>
+              <summary>${title}</summary>
+              <form data-form="debt-payment" data-id="${client.id}" data-movement="${type}">
+                ${balanceAmountField(`debt-${type}-${client.id}`, label)}
+                <button class="green" type="submit">${submit}</button>
+              </form>
+            </details>`).join("") : ""}
+            <details>
+              <summary>Histórico (${movements.length})</summary>
+              <ul class="balance-history">${movements.reverse().map(movement =>
+                `<li>${displayDate(movement.data)} · ${movementLabels[movement.tipo]} ${movement.tipo === "entrada" ? "+" : "−"}${money(movement.valor)}</li>`).join("")}</ul>
+            </details>
+          </div>`)).join("");
+      return entries + (clientCards || card("Saldos por cliente", "<p>Nenhum saldo lançado.</p>"));
+    }
+
+    function recordDebtMovement(form, fields) {
+      const sector = currentTab;
+      if (!Object.hasOwn(balanceTitles, sector)) return;
+      const isEntry = form.dataset.form === "debt-entry";
+      const isReceipt = !isEntry && sector !== "saldos" && form.dataset.movement === "recebimento";
+      const tipo = isEntry ? "entrada" : isReceipt ? "recebimento" : "abatimento";
+      const newClient = isEntry && fields.get("cid") === "new";
+      const clientId = Number(isEntry ? fields.get("cid") : form.dataset.id);
+      const nome = newClient ? fields.get("nome").trim() : "";
+      const input = String(fields.get("valor")).trim();
+      const normalized = input.replace(/\.(?=\d{3}(?:\.|,|$))/g, "").replace(",", ".");
+      const valor = Math.round(Number(normalized) * 100);
+      const format = /^(?:\d+(?:[,.]\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)$/;
+      if (!format.test(input) || !validPrincipal(valor)) {
+        return setStatus("Informe um valor maior que zero, com até duas casas decimais.", true);
+      }
+      const client = records.clientes.find(item => item.id === clientId);
+      if (newClient ? !nome : !client || (isEntry && client.arquivado)) {
+        return setStatus("Selecione o cliente ou informe o nome para o novo cadastro.", true);
+      }
+      const balance = debtBalance(clientMovements(records, clientId, sector));
+      if (!isEntry && valor > balance) {
+        const label = isReceipt ? "O recebimento" : "O abatimento";
+        return setStatus(`${label} não pode ser maior que o saldo de ${money(balance)}.`, true);
+      }
+      if (isEntry && !validPrincipal(balance + valor)) {
+        return setStatus("O valor excede o limite de saldo por cliente.", true);
+      }
+      const data = today();
+      return save(next => {
+        let cid = clientId;
+        if (newClient) {
+          cid = nextId(next.clientes);
+          next.clientes.push({ id: cid, nome, documento: "", endereco: "", status: "pendente" });
+        }
+        next.movimentosSaldo ??= [];
+        next.movimentosSaldo.push({ cid, setor: sector, tipo, valor, data });
+      });
     }
 
     function clients() {
@@ -234,11 +359,11 @@
           ${client.documento ? `<p>Documento ${escapeHtml(client.documento)}</p>` : ""}
           ${client.endereco ? `<p>Endereço ${escapeHtml(client.endereco)}</p>` : ""}
           ${client.arquivado ? action("Restaurar cliente", "restore-client", client.id, "green")
-            : !records.emprestimos.some(loan => loan.cid === client.id && active(loan))
+            : !hasOpenBalance(records, client.id)
               ? action("Arquivar cliente quitado", "archive-client", client.id) : ""}
           ${action("Editar cadastro", "edit-client", client.id)}
-          ${records.emprestimos.some(loan => loan.cid === client.id && active(loan))
-            ? '<p class="muted">Quite os empréstimos em aberto para apagar este cliente.</p>'
+          ${hasOpenBalance(records, client.id)
+            ? '<p class="muted">Quite os valores em aberto para apagar este cliente.</p>'
             : action("Apagar cliente", "delete-client", client.id, "red")}
           ${clientFiles(client)}
         `}
@@ -255,7 +380,7 @@
       return card("Confirmar exclusão do cliente", `
         <form data-form="delete-client" data-id="${client.id}">
           <p class="danger">Apagar definitivamente ${escapeHtml(client.nome)}?</p>
-          <p>Serão excluídos os documentos, ${loans.length} empréstimo(s) e todo o histórico de pagamentos deste cliente.</p>
+          <p>Serão excluídos os documentos, ${loans.length} empréstimo(s) e todo o histórico de pagamentos e de saldo devedor deste cliente.</p>
           <p>Baixe uma cópia dos dados e os documentos antes se precisar guardar o histórico.</p>
           <label for="delete-confirmation">Digite APAGAR CLIENTE para confirmar</label>
           <input id="delete-confirmation" name="confirmacao" autocomplete="off" autocorrect="off" spellcheck="false" required>
@@ -407,15 +532,43 @@
         ${rows.join("") || '<p>Nenhum vencimento mensal concluído.</p>'}</details>`;
     }
 
+    function editableInterestPayment(payment) {
+      if (!payment || payment.principal || !payment.vencimento || (payment.juros <= 0 && payment.jurosOriginal == null)) return false;
+      const loan = records.emprestimos.find(item => item.id === payment.eid && item.cid === payment.cid);
+      return Boolean(loan && payment.vencimento < loan.vencimento);
+    }
+
+    function receivedInterestEditor(payment, index) {
+      if (!editableInterestPayment(payment)) return "";
+      if (receivedInterestEdit?.index !== index || receivedInterestEdit.revision !== records.revision) {
+        return action("Editar juros recebidos", "edit-received-interest", index);
+      }
+      return `<form data-form="edit-received-interest" data-id="${index}">
+        <label for="received-interest">Juros efetivamente recebidos (R$)</label>
+        <input id="received-interest" name="juros" type="number" min="${payment.multa > 0 ? "0" : "0.01"}"
+          step="0.01" value="${(payment.juros / 100).toFixed(2)}" required>
+        <p class="muted">Confira o valor recebido. Este mês continuará marcado como pago.</p>
+        <div class="actions">
+          <button type="submit" class="green">Salvar correção</button>
+          ${action("Cancelar", "cancel-received-interest", index)}
+        </div>
+      </form>`;
+    }
+
     function reports() {
       const day = today();
       const loans = records.emprestimos.filter(loan => !reportClient || loan.cid === reportClient);
-      const transactions = records.pagamentos.filter(payment => !reportClient || payment.cid === reportClient);
-      const payments = [...transactions].sort((a, b) => b.data.localeCompare(a.data)).map(payment => `<article>
+      const selectedPayments = records.pagamentos.map((payment, index) => ({ payment, index }))
+        .filter(({ payment }) => !reportClient || payment.cid === reportClient);
+      const transactions = selectedPayments.map(({ payment }) => payment);
+      const payments = selectedPayments.sort((a, b) => b.payment.data.localeCompare(a.payment.data))
+        .map(({ payment, index }) => `<article>
         <p><strong>${escapeHtml(clientName(payment.cid))}</strong> · nº ${loanNumber(payment.eid)}<br>
           Recebido em ${displayDate(payment.data)}${!payment.principal && payment.vencimento ? ` · Vencimento ${displayDate(payment.vencimento)}` : ""}<br>
           Juros ${money(payment.juros)} · Encargos ${money(payment.multa)} · Principal ${money(payment.principal)}
           ${payment.multaDispensada ? `<br>Multa dispensada neste vencimento · ${payment.diasAtraso ?? 0} dia(s) de atraso na data do pagamento` : ""}</p>
+        ${payment.jurosOriginal == null ? "" : `<p class="muted">Valor de juros antes da primeira correção ${money(payment.jurosOriginal)}</p>`}
+        ${receivedInterestEditor(payment, index)}
       </article>`).join("");
       const options = records.clientes.map(client =>
         `<option value="${client.id}" ${reportClient === client.id ? "selected" : ""}>${escapeHtml(client.nome)}</option>`).join("");
@@ -437,13 +590,13 @@
 
     function dataPage() {
       return card("Cópias dos dados", `
-        <p>A cópia inclui os cadastros, empréstimos e pagamentos. Baixe os documentos na ficha de cada cliente.</p>
+        <p>A cópia inclui os cadastros, empréstimos, pagamentos e o histórico de saldo devedor. Baixe os documentos na ficha de cada cliente.</p>
         ${action("Baixar cópia dos dados na nuvem", "export", 0)}
         <p>Se você usou o protótipo neste navegador, pode baixar os registros antigos separadamente.</p>
         ${action("Baixar dados do protótipo", "export-local", 0)}
         <p class="muted">As cópias em JSON ficam sem criptografia.</p>`)
         + card("Apagar dados de teste", `
-          <p>Apaga todos os clientes, documentos, empréstimos e pagamentos. Seu acesso e o ícone serão mantidos.</p>
+          <p>Apaga todos os clientes, documentos, empréstimos, pagamentos e o histórico de saldo devedor. Seu acesso e o ícone serão mantidos.</p>
           <p>Antes, baixe a cópia dos dados e os documentos que desejar guardar.</p>
           ${action("Apagar todos os dados de teste", "clear-tests", 0, "red")}
         `);
@@ -563,6 +716,7 @@
       currentTab = "novo";
       clientFilter = "";
       reportClient = 0;
+      receivedInterestEdit = undefined;
       principalEdit = undefined;
       activeClientEdit = 0;
       activeClientDelete = 0;
@@ -661,11 +815,25 @@
       }
     }
 
+    view.addEventListener("change", event => {
+      if (event.target.id !== "debt-client") return;
+      const section = view.querySelector("#debt-new-client");
+      const nameInput = view.querySelector("#debt-name");
+      const creating = event.target.value === "new";
+      section.hidden = !creating;
+      nameInput.disabled = !creating;
+      nameInput.required = creating;
+      if (creating) nameInput.focus();
+    });
+
     view.addEventListener("submit", event => {
       const form = event.target;
       event.preventDefault();
       if (!records || saving) return;
       const fields = new FormData(form);
+      if (form.dataset.form === "debt-entry" || form.dataset.form === "debt-payment") {
+        return recordDebtMovement(form, fields);
+      }
       if (form.dataset.form === "delete-client") {
         return deleteClient(Number(form.dataset.id), fields.get("confirmacao"));
       }
@@ -698,6 +866,9 @@
       if (form.dataset.form === "payment") {
         return recordPayment(Number(form.dataset.id), fields);
       }
+      if (form.dataset.form === "edit-received-interest") {
+        return editReceivedInterest(Number(form.dataset.id), fields.get("juros"));
+      }
       if (form.dataset.form === "edit-principal") {
         return editPrincipal(Number(form.dataset.id), Math.round(Number(fields.get("principal")) * 100));
       }
@@ -715,6 +886,37 @@
         mesVencimento: 1, vencimento: dueDate(data, 1), quitado: false
       }));
     });
+
+    async function editReceivedInterest(index, amount) {
+      const payment = records.pagamentos[index];
+      if (!editableInterestPayment(payment) || receivedInterestEdit?.index !== index
+          || receivedInterestEdit.revision !== records.revision) {
+        receivedInterestEdit = undefined;
+        view.replaceChildren();
+        render();
+        return setStatus("O histórico mudou. Abra o pagamento novamente.", true);
+      }
+      const juros = Math.round(Number(amount) * 100);
+      if (amount == null || amount === "" || !Number.isSafeInteger(juros * 10_000)
+          || juros < 0 || juros + payment.multa <= 0) {
+        return setStatus("Informe um valor válido para os juros recebidos.", true);
+      }
+      if (juros === payment.juros) {
+        receivedInterestEdit = undefined;
+        view.replaceChildren();
+        render();
+        return setStatus("O valor registrado já está correto.");
+      }
+      const saved = await save(next => {
+        const target = next.pagamentos[index];
+        target.jurosOriginal ??= target.juros;
+        target.juros = juros;
+      });
+      if (!saved) return;
+      receivedInterestEdit = undefined;
+      render();
+      setStatus("Juros recebidos corrigidos.");
+    }
 
     async function editPrincipal(id, principal) {
       if (!validPrincipal(principal)) return setStatus("Informe um valor principal válido, maior que zero.", true);
@@ -800,6 +1002,7 @@
       if (!records || saving) return;
       if (input.id === "report-client") {
         reportClient = Number(input.value);
+        receivedInterestEdit = undefined;
         view.replaceChildren();
         render();
       }
@@ -816,12 +1019,12 @@
       if (!records || !session || saving) return;
       const client = records.clientes.find(item => item.id === clientId);
       if (!client) return;
-      if (archived && records.emprestimos.some(loan => loan.cid === clientId && active(loan))) {
-        return setStatus("Este cliente tem empréstimo em aberto. Quite todos os empréstimos antes de arquivar.", true);
+      if (archived && hasOpenBalance(records, clientId)) {
+        return setStatus("Quite os valores em aberto deste cliente antes de arquivar.", true);
       }
       const saved = await save(next => {
         const target = next.clientes.find(item => item.id === clientId);
-        if (!target || (archived && next.emprestimos.some(loan => loan.cid === clientId && active(loan)))) {
+        if (!target || (archived && hasOpenBalance(next, clientId))) {
           throw new Error("STALE");
         }
         target.arquivado = archived;
@@ -867,7 +1070,7 @@
       }
       if (name === "clear-tests") {
         if (!session) return;
-      if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s) e seus documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
+      if (!confirm(`Excluir definitivamente ${records.clientes.length} cliente(s), ${records.emprestimos.length} empréstimo(s), ${records.pagamentos.length} pagamento(s), ${(records.movimentosSaldo ?? []).length} movimento(s) de saldo devedor e os documentos?\n\nConfirme apenas se todos são testes e você já guardou os dados necessários. Seu e-mail e sua senha serão mantidos.`)) return;
       if (prompt("Para apagar, digite exatamente: APAGAR TESTES") !== "APAGAR TESTES") return;
       return clearTestData(new Map([
         ["confirmacao", "APAGAR TESTES"], ["backup", "on"]
@@ -876,6 +1079,14 @@
       if (name === "export-local") return exportLocal();
       if (name === "export") return download({ dados: records }, "credmaster-nuvem");
       if (name === "fetch-file") return handleAttachment(number, button.dataset.kind);
+      if (name === "edit-received-interest" || name === "cancel-received-interest") {
+        if (name === "edit-received-interest" && !editableInterestPayment(records.pagamentos[number])) return;
+        receivedInterestEdit = name === "edit-received-interest" ? { index: number, revision: records.revision } : undefined;
+        view.replaceChildren();
+        render();
+        view.querySelector("#received-interest")?.focus();
+        return;
+      }
       if (name === "clear-search" || name === "edit-client" || name === "cancel-edit") {
         if (name === "clear-search") clientFilter = "";
         if (name === "edit-client") activeClientEdit = number;
@@ -918,19 +1129,32 @@
         return render();
       }
       if (name === "whatsapp") {
-        const day = today();
-        const { juros, multa } = cycleBalance(loan, day);
-        const message = `Olá, ${clientName(loan.cid)}!\nEmpréstimo nº ${loanNumber(loan.id)}\nData do empréstimo ${displayDate(loan.data)}\nValor emprestado ${money(loan.principal)}\nVencimento dos juros ${displayDate(loan.vencimento)}\nJuros em aberto ${money(juros)}\nDias em atraso ${lateDays(loan.vencimento, day)}\nEncargos calculados ${money(multa)}\nTotal em aberto ${money(juros + multa)}\nCaso já tenha pago, favor enviar o comprovante.`;
-        window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank", "noopener,noreferrer");
+        window.open("https://wa.me/?text=" + encodeURIComponent(chargeMessage(loan)), "_blank", "noopener,noreferrer");
         return;
       }
       if (name === "settle") return settleLoan(loan);
     });
 
+    function chargeMessage(loan) {
+      const day = today();
+      const { juros, multa } = cycleBalance(loan, day);
+      return [
+        `Olá, ${clientName(loan.cid)}!`,
+        `Empréstimo nº ${loanNumber(loan.id)}`,
+        `Vencimento dos juros ${displayDate(loan.vencimento)}`,
+        `Juros em aberto ${money(juros)}`,
+        `Dias em atraso ${lateDays(loan.vencimento, day)}`,
+        `Encargos calculados ${money(multa)}`,
+        `Total em aberto ${money(juros + multa)}`,
+        "Caso já tenha pago, favor enviar o comprovante."
+      ].join("\n");
+    }
+
     nav.addEventListener("click", event => {
       const button = event.target.closest("[data-tab]");
       if (!button || !records || saving) return;
       currentTab = button.dataset.tab;
+      receivedInterestEdit = undefined;
       principalEdit = undefined;
       view.replaceChildren();
       render();
@@ -1008,8 +1232,8 @@
       if (!records || !session || saving) return;
       const client = records.clientes.find(item => item.id === clientId);
       if (!client) return;
-      if (records.emprestimos.some(loan => loan.cid === clientId && active(loan))) {
-        return setStatus("Quite os empréstimos em aberto antes de apagar este cliente.", true);
+      if (hasOpenBalance(records, clientId)) {
+        return setStatus("Quite os valores em aberto antes de apagar este cliente.", true);
       }
       if (String(confirmation ?? "").trim().replace(/\s+/g, " ").toUpperCase() !== "APAGAR CLIENTE") {
         const message = "Digite APAGAR CLIENTE no campo e toque em Confirmar exclusão. Nenhum dado foi apagado.";
@@ -1028,7 +1252,7 @@
           const snapshot = await transaction.get(current.ref);
           const latest = snapshot.exists() ? snapshot.data() : emptyState();
           if (latest.revision !== revision || !latest.clientes.some(item => item.id === clientId)
-              || latest.emprestimos.some(loan => loan.cid === clientId && active(loan))) throw new Error("STALE");
+              || hasOpenBalance(latest, clientId)) throw new Error("STALE");
           const documents = await Promise.all(Object.keys(documentTypes).map(async kind => {
             const manifest = cloud.doc(current.ref, "anexos", `${clientId}-${kind}`);
             return { manifest, count: storedPartCount(await transaction.get(manifest)) };
@@ -1046,6 +1270,7 @@
             clientes: latest.clientes.filter(item => item.id !== clientId),
             emprestimos: latest.emprestimos.filter(item => item.cid !== clientId),
             pagamentos: latest.pagamentos.filter(item => item.cid !== clientId && !loanIds.has(item.eid)),
+            movimentosSaldo: (latest.movimentosSaldo ?? []).filter(item => item.cid !== clientId),
             revision: latest.revision + 1
           };
           transaction.set(current.ref, cleared);
@@ -1060,7 +1285,7 @@
         activeClientEdit = 0;
         activeClientDelete = 0;
         currentTab = "clientes";
-        setStatus("Cliente e seus documentos, empréstimos e pagamentos apagados.");
+        setStatus("Cliente, documentos, empréstimos, pagamentos e histórico de saldo devedor apagados.");
       } catch (error) {
         if (session !== current) return;
         setStatus(error.message === "STALE"
