@@ -50,9 +50,6 @@
     .balance-actions summary { cursor: pointer; font-weight: 650; }
     .balance-history { padding-inline-start: 22px; line-height: 1.6; }
     .balance-note { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
-    #whatsapp-charge-editor { width: min(420px, calc(100% - 32px)); margin: auto; border: 0; color: inherit; }
-    #whatsapp-charge-editor::backdrop { background: #15223a80; }
-    #whatsapp-charge-text { resize: vertical; min-height: 8rem; }
   </style>
 </head>
 <body>
@@ -98,17 +95,6 @@
     </section>
     <p id="status" role="status"></p>
     <div id="view"></div>
-    <dialog id="whatsapp-charge-editor" class="card" aria-labelledby="whatsapp-charge-title">
-      <h2 id="whatsapp-charge-title">Editar cobrança</h2>
-      <form id="whatsapp-charge-form">
-        <label for="whatsapp-charge-text">Mensagem de cobrança</label>
-        <textarea id="whatsapp-charge-text" class="balance-note-input" rows="10" required></textarea>
-        <div class="actions">
-          <button id="cancel-whatsapp-charge" class="secondary" type="button">Cancelar</button>
-          <button type="submit">Abrir no WhatsApp</button>
-        </div>
-      </form>
-    </dialog>
   </main>
   <noscript>Ative o JavaScript para entrar no CredMaster.</noscript>
   <script type="module">
@@ -135,8 +121,6 @@
     const overdueList = document.querySelector("#overdue-list");
     const status = document.querySelector("#status");
     const view = document.querySelector("#view");
-    const chargeEditor = document.querySelector("#whatsapp-charge-editor");
-    const chargeDraft = document.querySelector("#whatsapp-charge-text");
     const emptyState = () => ({ revision: 0, clientes: [], emprestimos: [], pagamentos: [], movimentosSaldo: [] });
     const formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
     const money = cents => formatter.format(cents / 100);
@@ -800,8 +784,6 @@
     }
 
     function startSession(user) {
-      chargeEditor.close();
-      chargeDraft.value = "";
       session?.unsubscribe?.();
       session = undefined;
       records = undefined;
@@ -1228,42 +1210,12 @@
         view.replaceChildren();
         return render();
       }
-      if (name === "whatsapp") {
-        chargeDraft.value = chargeMessage(loan);
-        chargeEditor.showModal();
-        return;
-      }
+      if (name === "whatsapp") return openWhatsAppCharge(loan);
       if (name === "settle") return settleLoan(loan);
     });
 
-    document.querySelector("#cancel-whatsapp-charge").addEventListener("click", () => chargeEditor.close());
-    document.querySelector("#whatsapp-charge-form").addEventListener("submit", event => {
-      event.preventDefault();
-      const message = chargeDraft.value.trim();
-      if (!message) {
-        chargeDraft.value = "";
-        chargeDraft.reportValidity();
-        return;
-      }
-      chargeEditor.close();
-      return openWhatsAppCharge(message);
-    });
-
-    async function openWhatsAppCharge(message) {
-      try {
-        await navigator.clipboard.writeText(pixKey);
-        setStatus("Chave Pix copiada. Envie a cobrança e depois cole a chave em uma nova mensagem no WhatsApp.");
-      } catch {
-        setStatus("Depois de enviar a cobrança, volte ao CredMaster para enviar a chave Pix separadamente. ");
-        const pixShare = document.createElement("a");
-        pixShare.href = "https://wa.me/?text=" + encodeURIComponent(pixKey);
-        pixShare.target = "_blank";
-        pixShare.rel = "noopener noreferrer";
-        pixShare.textContent = "Abrir só a chave Pix no WhatsApp";
-        status.append(pixShare);
-      }
-
-      const url = "https://wa.me/?text=" + encodeURIComponent(message);
+    function openWhatsAppCharge(loan) {
+      const url = "https://wa.me/?text=" + encodeURIComponent(chargeMessage(loan));
       const tab = window.open("about:blank", "_blank");
       if (tab) {
         tab.opener = null;
@@ -1285,8 +1237,10 @@
         `Encargos calculados ${money(multa)}`,
         `Total em aberto ${money(juros + multa)}`,
         "",
-        "Vou enviar a chave Pix na próxima mensagem.",
-        "Caso já tenha pago, favor enviar o comprovante."
+        "Caso já tenha pago, favor enviar o comprovante.",
+        "",
+        "Chave Pix",
+        pixKey
       ].join("\n");
     }
 
