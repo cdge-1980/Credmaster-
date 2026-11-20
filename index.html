@@ -170,6 +170,7 @@
     let paymentLoan = 0;
     let activeClientEdit = 0;
     let principalEdit;
+    let loanDateEdit = 0;
     let receivedInterestEdit;
     let activeClientDelete = 0;
     let showArchivedClients = false;
@@ -508,11 +509,13 @@
     function loans() {
       return records.emprestimos.map(loan => card(`Empréstimo nº ${loanNumber(loan.id)}`, `
         <p>${escapeHtml(clientName(loan.cid))} · Principal ${money(loan.principal)}</p>
+        <p>Data do empréstimo ${displayDate(loan.data)}</p>
         <p>Juros mensais de ${(loan.taxa / 100).toLocaleString("pt-BR")}% · ${money(interest(loan))}</p>
         <p class="${loan.quitado ? "good" : "muted"}">${loan.quitado ? "QUITADO" : "ATIVO"}</p>
         ${loan.quitado ? "" : `<p>Próximo vencimento ${displayDate(loan.vencimento)}</p>
           ${loan.jurosFixadosNoVencimento == null ? "" : `<p class="muted">Juros deste vencimento ${money(currentInterest(loan))}</p>`}
           ${principalEditor(loan)}
+          ${loanDateEditor(loan)}
           ${action("Quitar principal", "settle", loan.id)}`}`)).join("")
         || card("Empréstimos", "<p>Nenhum empréstimo cadastrado.</p>");
     }
@@ -531,6 +534,20 @@
         <div class="actions">
           <button type="submit" class="green">Salvar valor</button>
           ${action("Cancelar", "cancel-principal-edit", loan.id)}
+        </div>
+      </form>`;
+    }
+
+    function loanDateEditor(loan) {
+      if (loanDateEdit !== loan.id) return action("Editar data", "edit-loan-date", loan.id);
+      return `<form data-form="edit-loan-date" data-id="${loan.id}" data-revision="${records.revision}">
+        <label for="corrected-loan-date">Data correta da entrega do dinheiro</label>
+        <input id="corrected-loan-date" name="data" type="date" value="${escapeHtml(loan.data)}" max="${today()}" required>
+        <p class="muted">O primeiro vencimento é um mês após a entrega. Os vencimentos e os dias de atraso serão recalculados.
+          Os valores pagos e as datas em que você recebeu cada pagamento serão mantidos.</p>
+        <div class="actions">
+          <button type="submit" class="green">Salvar data</button>
+          ${action("Cancelar", "cancel-loan-date-edit", loan.id)}
         </div>
       </form>`;
     }
@@ -792,6 +809,7 @@
       reportClient = 0;
       receivedInterestEdit = undefined;
       principalEdit = undefined;
+      loanDateEdit = 0;
       activeClientEdit = 0;
       activeClientDelete = 0;
       showArchivedClients = false;
@@ -949,6 +967,9 @@
       if (form.dataset.form === "edit-principal") {
         return editPrincipal(Number(form.dataset.id), Math.round(Number(fields.get("principal")) * 100));
       }
+      if (form.dataset.form === "edit-loan-date") {
+        return editLoanDate(Number(form.dataset.id), fields.get("data"), Number(form.dataset.revision));
+      }
       const cid = Number(fields.get("cid"));
       const principal = Math.round(Number(fields.get("principal")) * 100);
       const taxa = Math.round(Number(fields.get("taxa")) * 100);
@@ -1022,6 +1043,64 @@
       principalEdit = undefined;
       render();
       setStatus("Valor do empréstimo corrigido.");
+    }
+
+    async function editLoanDate(id, date, revision) {
+      const parsed = new Date(date);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime())
+          || parsed.toISOString().slice(0, 10) !== date || date > today()) {
+        return setStatus("Informe uma data válida, até hoje.", true);
+      }
+      const loan = records.emprestimos.find(item => item.id === id);
+      if (!loan || !active(loan) || loanDateEdit !== id || revision !== records.revision) {
+        loanDateEdit = 0;
+        view.replaceChildren();
+        render();
+        return setStatus("O empréstimo mudou. Abra a edição da data novamente.", true);
+      }
+      if (date === loan.data) {
+        loanDateEdit = 0;
+        view.replaceChildren();
+        render();
+        return setStatus("A data do empréstimo já está correta.");
+      }
+
+      const paymentMatchesLoan = payment => payment.eid === id && payment.cid === loan.cid;
+      const payments = records.pagamentos.filter(paymentMatchesLoan);
+      if (payments.some(payment => payment.data < date)) {
+        return setStatus("Há um pagamento anterior à nova data. Confira as datas antes de corrigir o empréstimo.", true);
+      }
+
+      const dueDates = new Map();
+      for (let month = 1; month < loan.mesVencimento; month++) {
+        dueDates.set(dueDate(loan.data, month), dueDate(date, month));
+      }
+      if (dueDates.has(loan.vencimento) ||
+          payments.some(payment => payment.vencimento && payment.vencimento !== loan.vencimento && !dueDates.has(payment.vencimento))) {
+        return setStatus("O histórico tem um vencimento fora do calendário mensal. Confira os pagamentos antes de corrigir a data.", true);
+      }
+      const currentDue = dueDate(date, loan.mesVencimento);
+      dueDates.set(loan.vencimento, currentDue);
+
+      const saved = await save(next => {
+        const target = next.emprestimos.find(item => item.id === id);
+        target.data = date;
+        target.vencimento = currentDue;
+        if (dueDates.has(target.multaDispensadaVencimento)) {
+          target.multaDispensadaVencimento = dueDates.get(target.multaDispensadaVencimento);
+        }
+        for (const payment of next.pagamentos.filter(paymentMatchesLoan)) {
+          if (!payment.vencimento) continue;
+          payment.vencimento = dueDates.get(payment.vencimento);
+          if (Object.hasOwn(payment, "diasAtraso")) {
+            payment.diasAtraso = lateDays(payment.vencimento, payment.data);
+          }
+        }
+      });
+      if (!saved) return;
+      loanDateEdit = 0;
+      render();
+      setStatus("Data do empréstimo e vencimentos atualizados. Pagamentos mantidos.");
     }
 
     async function recordPayment(id, fields) {
@@ -1186,12 +1265,21 @@
       const loan = records.emprestimos.find(item => item.id === number);
       if (!loan || loan.quitado) return;
       if (name === "edit-principal" || name === "cancel-principal-edit") {
+        loanDateEdit = 0;
         principalEdit = name === "edit-principal" ? {
           id: loan.id, original: loan.principal, due: loan.vencimento, keepsCurrentInterest: hasCurrentPayment(loan)
         } : undefined;
         view.replaceChildren();
         render();
         view.querySelector("#corrected-principal")?.focus();
+        return;
+      }
+      if (name === "edit-loan-date" || name === "cancel-loan-date-edit") {
+        principalEdit = undefined;
+        loanDateEdit = name === "edit-loan-date" ? loan.id : 0;
+        view.replaceChildren();
+        render();
+        view.querySelector("#corrected-loan-date")?.focus();
         return;
       }
       if (name === "toggle-penalty") {
@@ -1250,6 +1338,7 @@
       currentTab = button.dataset.tab;
       receivedInterestEdit = undefined;
       principalEdit = undefined;
+      loanDateEdit = 0;
       view.replaceChildren();
       render();
     });
