@@ -15,8 +15,10 @@
     header { background: #173568; color: white; padding: 22px 18px; }
     h1 { margin: 0; font-size: 26px; }
     small { opacity: .85; }
-    main, #login { max-width: 680px; margin: auto; padding: 15px; }
+    main, #login, #pix-page { max-width: 680px; margin: auto; padding: 15px; }
     #login { max-width: 420px; margin-top: 18px; }
+    #pix-page { max-width: 420px; margin-top: 18px; }
+    #pix-page button { width: 100%; min-height: 48px; font-size: 16px; }
     nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
     nav button { grid-column: span 2; font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
     nav .sector-tab { grid-column: span 3; min-height: 72px; padding: 10px 6px; }
@@ -60,6 +62,15 @@
     <h1>CredMaster</h1>
     <small>Gestão de empréstimos e cobranças</small>
   </header>
+  <section id="pix-page" class="pix-actions" aria-labelledby="pix-title" hidden>
+    <div class="card">
+      <h2 id="pix-title">Chave Pix para pagamento</h2>
+      <p>Copie a chave e cole no campo de chave Pix do seu banco.</p>
+      <button id="copy-public-pix" class="green" type="button">Copiar chave Pix</button>
+      <input class="pix-key" type="text" aria-label="Chave Pix" readonly hidden>
+      <span class="pix-status muted" role="status"></span>
+    </div>
+  </section>
   <section id="login">
     <form id="login-form" class="card">
       <h2>Entrar no CredMaster</h2>
@@ -103,6 +114,7 @@
   <script type="module">
     const sdk = "https://www.gstatic.com/firebasejs/12.11.0/";
     const pixKey = "ee38de20-a711-438f-bef5-5642a2339d76";
+    const pixCopyUrl = "https://cdge-1980.github.io/Credmaster-/?pix=1";
     const ownerUid = "EVKdQFXbYNXprvnhX6zyDRZOemE3";
     const config = {
       apiKey: "AIzaSyBABu6lN9Mwr5gizgXEA5WCMkXgcPD0YZY",
@@ -1260,7 +1272,10 @@
         `Encargos calculados ${money(multa)}`,
         `Total em aberto ${money(juros + multa)}`,
         "",
-        "*Chave Pix (copie a linha abaixo)*",
+        "*Toque no link para copiar a chave Pix*",
+        pixCopyUrl,
+        "",
+        "Chave Pix",
         pixKey,
         "",
         "Caso já tenha pago, favor enviar o comprovante."
@@ -1281,68 +1296,82 @@
       if (!document.hidden) renderOverdueAlert();
     });
 
-    try {
-      const [appSdk, authSdk, firestoreSdk] = await Promise.all([
-        import(sdk + "firebase-app.js"),
-        import(sdk + "firebase-auth.js"),
-        import(sdk + "firebase-firestore.js")
-      ]);
-      const app = appSdk.initializeApp(config);
-      auth = { ...authSdk, instance: authSdk.initializeAuth(app, { persistence: authSdk.browserSessionPersistence }) };
-      cloud = { ...firestoreSdk, instance: firestoreSdk.getFirestore(app) };
-      auth.onAuthStateChanged(auth.instance, startSession, () => {
-        startSession(null);
-        loginMessage.textContent = "A sessão não carregou. Atualize a página.";
-      });
-      document.querySelector("#login-form").addEventListener("submit", async event => {
-        event.preventDefault();
-        if (loginButton.disabled) return;
-        loginButton.disabled = true;
-        resetButton.disabled = true;
-        loginMessage.textContent = "Entrando…";
-        try {
-          const { user } = await auth.signInWithEmailAndPassword(auth.instance, email.value.trim(), password.value);
-          if (user.uid === ownerUid) loginMessage.textContent = "";
-        } catch (error) {
-          loginMessage.textContent = error.code === "auth/network-request-failed"
-            ? "Falha de conexão. Tente novamente."
-            : "Não foi possível entrar. Confira seu e-mail e sua senha.";
-        } finally {
-          password.value = "";
-          loginButton.disabled = Boolean(auth.instance.currentUser);
-          resetButton.disabled = loginButton.disabled;
-        }
-      });
-      resetButton.addEventListener("click", async () => {
-        if (!email.value || !email.reportValidity()) {
-          email.focus();
-          loginMessage.textContent = "Informe seu e-mail para redefinir a senha.";
-          return;
-        }
-        resetButton.disabled = true;
-        loginButton.disabled = true;
-        try {
-          await auth.sendPasswordResetEmail(auth.instance, email.value.trim());
-          loginMessage.textContent = "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha.";
-        } catch (error) {
-          loginMessage.textContent = error.code === "auth/user-not-found"
-            ? "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha."
-            : "Não foi possível solicitar a redefinição. Tente novamente.";
-        } finally {
-          loginButton.disabled = Boolean(auth.instance.currentUser);
-          resetButton.disabled = loginButton.disabled;
-        }
-      });
-      logout.addEventListener("click", async () => {
-        try {
-          await auth.signOut(auth.instance);
-          loginMessage.textContent = "Você saiu do CredMaster.";
-        } catch {
-          setStatus("Não foi possível sair. Feche esta aba para encerrar a sessão.", true);
-        }
-      });
-    } catch {
-      loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
+    if (new URLSearchParams(window.location.search).get("pix") === "1") {
+      const page = document.querySelector("#pix-page");
+      const button = page.querySelector("#copy-public-pix");
+      page.querySelector(".pix-key").value = pixKey;
+      button.addEventListener("click", () => copyPixKey(button));
+      login.hidden = true;
+      page.hidden = false;
+      document.title = "Copiar chave Pix | CredMaster";
+    } else {
+      await connect();
+    }
+
+    async function connect() {
+      try {
+        const [appSdk, authSdk, firestoreSdk] = await Promise.all([
+          import(sdk + "firebase-app.js"),
+          import(sdk + "firebase-auth.js"),
+          import(sdk + "firebase-firestore.js")
+        ]);
+        const app = appSdk.initializeApp(config);
+        auth = { ...authSdk, instance: authSdk.initializeAuth(app, { persistence: authSdk.browserSessionPersistence }) };
+        cloud = { ...firestoreSdk, instance: firestoreSdk.getFirestore(app) };
+        auth.onAuthStateChanged(auth.instance, startSession, () => {
+          startSession(null);
+          loginMessage.textContent = "A sessão não carregou. Atualize a página.";
+        });
+        document.querySelector("#login-form").addEventListener("submit", async event => {
+          event.preventDefault();
+          if (loginButton.disabled) return;
+          loginButton.disabled = true;
+          resetButton.disabled = true;
+          loginMessage.textContent = "Entrando…";
+          try {
+            const { user } = await auth.signInWithEmailAndPassword(auth.instance, email.value.trim(), password.value);
+            if (user.uid === ownerUid) loginMessage.textContent = "";
+          } catch (error) {
+            loginMessage.textContent = error.code === "auth/network-request-failed"
+              ? "Falha de conexão. Tente novamente."
+              : "Não foi possível entrar. Confira seu e-mail e sua senha.";
+          } finally {
+            password.value = "";
+            loginButton.disabled = Boolean(auth.instance.currentUser);
+            resetButton.disabled = loginButton.disabled;
+          }
+        });
+        resetButton.addEventListener("click", async () => {
+          if (!email.value || !email.reportValidity()) {
+            email.focus();
+            loginMessage.textContent = "Informe seu e-mail para redefinir a senha.";
+            return;
+          }
+          resetButton.disabled = true;
+          loginButton.disabled = true;
+          try {
+            await auth.sendPasswordResetEmail(auth.instance, email.value.trim());
+            loginMessage.textContent = "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha.";
+          } catch (error) {
+            loginMessage.textContent = error.code === "auth/user-not-found"
+              ? "Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha."
+              : "Não foi possível solicitar a redefinição. Tente novamente.";
+          } finally {
+            loginButton.disabled = Boolean(auth.instance.currentUser);
+            resetButton.disabled = loginButton.disabled;
+          }
+        });
+        logout.addEventListener("click", async () => {
+          try {
+            await auth.signOut(auth.instance);
+            loginMessage.textContent = "Você saiu do CredMaster.";
+          } catch {
+            setStatus("Não foi possível sair. Feche esta aba para encerrar a sessão.", true);
+          }
+        });
+      } catch {
+        loginMessage.textContent = "O login não carregou. Atualize a página e tente novamente.";
+      }
     }
 
     async function deleteClient(clientId, confirmation) {
