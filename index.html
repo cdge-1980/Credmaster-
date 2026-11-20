@@ -1218,9 +1218,15 @@
       const message = chargeMessage(loan);
       try {
         await navigator.clipboard.writeText(pixKey);
-        setStatus("Chave Pix copiada. Se quiser, cole a chave em uma mensagem separada no WhatsApp.");
+        setStatus("Chave Pix copiada. Envie a cobrança e depois cole a chave em uma nova mensagem no WhatsApp.");
       } catch {
-        setStatus("O navegador bloqueou a cópia automática. A chave Pix está no fim da cobrança.");
+        setStatus("Depois de enviar a cobrança, volte ao CredMaster para enviar a chave Pix separadamente. ");
+        const pixShare = document.createElement("a");
+        pixShare.href = "https://wa.me/?text=" + encodeURIComponent(pixKey);
+        pixShare.target = "_blank";
+        pixShare.rel = "noopener noreferrer";
+        pixShare.textContent = "Abrir só a chave Pix no WhatsApp";
+        status.append(pixShare);
       }
 
       const url = "https://wa.me/?text=" + encodeURIComponent(message);
@@ -1245,10 +1251,7 @@
         `Encargos calculados ${money(multa)}`,
         `Total em aberto ${money(juros + multa)}`,
         "",
-        "Caso já tenha pago, favor enviar o comprovante.",
-        "",
-        "*Chave Pix*",
-        "```" + pixKey + "```"
+        "Caso já tenha pago, favor enviar o comprovante."
       ].join("\n");
     }
 
