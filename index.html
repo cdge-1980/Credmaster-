@@ -1215,12 +1215,11 @@
     });
 
     async function openWhatsAppCharge(loan) {
-      let message = chargeMessage(loan);
+      const message = chargeMessage(loan);
       try {
         await navigator.clipboard.writeText(pixKey);
-        setStatus("Chave Pix copiada. Envie a cobrança no WhatsApp e cole a chave em uma nova mensagem.");
+        setStatus("Chave Pix copiada. Se quiser, cole a chave em uma mensagem separada no WhatsApp.");
       } catch {
-        message += "\n\n*Chave Pix*\n" + pixKey;
         setStatus("O navegador bloqueou a cópia automática. A chave Pix está no fim da cobrança.");
       }
 
@@ -1246,7 +1245,10 @@
         `Encargos calculados ${money(multa)}`,
         `Total em aberto ${money(juros + multa)}`,
         "",
-        "Caso já tenha pago, favor enviar o comprovante."
+        "Caso já tenha pago, favor enviar o comprovante.",
+        "",
+        "*Chave Pix*",
+        pixKey
       ].join("\n");
     }
 
