@@ -15,10 +15,8 @@
     header { background: #173568; color: white; padding: 22px 18px; }
     h1 { margin: 0; font-size: 26px; }
     small { opacity: .85; }
-    main, #login, #pix-page { max-width: 680px; margin: auto; padding: 15px; }
+    main, #login { max-width: 680px; margin: auto; padding: 15px; }
     #login { max-width: 420px; margin-top: 18px; }
-    #pix-page { max-width: 420px; margin-top: 18px; }
-    #pix-page button { width: 100%; min-height: 48px; font-size: 16px; }
     nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
     nav button { grid-column: span 2; font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
     nav .sector-tab { grid-column: span 3; min-height: 72px; padding: 10px 6px; }
@@ -45,9 +43,6 @@
     .good { color: #146443; font-weight: 700; }
     .actions { display: flex; gap: 7px; flex-wrap: wrap; }
     .actions button { flex: 1; }
-    .pix-actions { margin-top: 8px; }
-    .pix-status:not(:empty) { display: block; margin-top: 8px; }
-    .pix-key { margin-top: 8px; }
     #status { margin: 0 0 12px; }
     #logout { margin-bottom: 15px; }
     article + article { border-top: 1px solid #e8edf4; }
@@ -62,15 +57,6 @@
     <h1>CredMaster</h1>
     <small>Gestão de empréstimos e cobranças</small>
   </header>
-  <section id="pix-page" class="pix-actions" aria-labelledby="pix-title" hidden>
-    <div class="card">
-      <h2 id="pix-title">Chave Pix para pagamento</h2>
-      <p>Copie a chave e cole no campo de chave Pix do seu banco.</p>
-      <button id="copy-public-pix" class="green" type="button">Copiar chave Pix</button>
-      <input class="pix-key" type="text" aria-label="Chave Pix" readonly hidden>
-      <span class="pix-status muted" role="status"></span>
-    </div>
-  </section>
   <section id="login">
     <form id="login-form" class="card">
       <h2>Entrar no CredMaster</h2>
@@ -564,14 +550,6 @@
           ${action(penaltyWaived(loan) ? "Recolocar multa deste vencimento" : "Retirar multa deste vencimento", "toggle-penalty", loan.id)}
           <p><strong>Total em aberto ${money(juros + multa)}</strong></p>
           <div class="actions">${action("Registrar pagamento", "pay", loan.id, "green")}${action("WhatsApp", "whatsapp", loan.id)}</div>
-          <div class="pix-actions">
-            <div class="actions">
-              ${action("Copiar chave Pix", "copy-pix", loan.id)}
-              ${action("Enviar só a chave pelo WhatsApp", "whatsapp-pix", loan.id)}
-            </div>
-            <input class="pix-key" type="text" value="${pixKey}" aria-label="Chave Pix" readonly hidden>
-            <span class="pix-status muted" role="status"></span>
-          </div>
           ${paymentLoan === loan.id ? paymentForm(loan, day, juros, multa) : ""}`);
       }).join("") || card("Cobranças", "<p>Nenhum empréstimo ativo.</p>");
     }
@@ -1232,31 +1210,28 @@
         view.replaceChildren();
         return render();
       }
-      if (name === "copy-pix") return copyPixKey(button);
-      if (name === "whatsapp" || name === "whatsapp-pix") {
-        const message = name === "whatsapp-pix" ? pixKey : chargeMessage(loan);
-        window.open("https://wa.me/?text=" + encodeURIComponent(message), "_blank", "noopener,noreferrer");
-        return;
-      }
+      if (name === "whatsapp") return openWhatsAppCharge(loan);
       if (name === "settle") return settleLoan(loan);
     });
 
-    async function copyPixKey(button) {
-      const actions = button.closest(".pix-actions");
-      const input = actions.querySelector(".pix-key");
-      const feedback = actions.querySelector(".pix-status");
-      feedback.textContent = "";
+    async function openWhatsAppCharge(loan) {
+      let message = chargeMessage(loan);
       try {
         await navigator.clipboard.writeText(pixKey);
+        setStatus("Chave Pix copiada. Envie a cobrança no WhatsApp e cole a chave em uma nova mensagem.");
       } catch {
-        input.hidden = false;
-        input.focus();
-        input.select();
-        feedback.textContent = "Toque e segure a chave selecionada e escolha Copiar.";
-        return;
+        message += "\n\n*Chave Pix*\n" + pixKey;
+        setStatus("O navegador bloqueou a cópia automática. A chave Pix está no fim da cobrança.");
       }
-      input.hidden = true;
-      feedback.textContent = "Chave Pix copiada. Agora você pode colar.";
+
+      const url = "https://wa.me/?text=" + encodeURIComponent(message);
+      const tab = window.open("about:blank", "_blank");
+      if (tab) {
+        tab.opener = null;
+        tab.location.replace(url);
+      } else {
+        window.location.assign(url);
+      }
     }
 
     function chargeMessage(loan) {
@@ -1270,9 +1245,6 @@
         `Dias em atraso ${lateDays(loan.vencimento, day)}`,
         `Encargos calculados ${money(multa)}`,
         `Total em aberto ${money(juros + multa)}`,
-        "",
-        "*Chave Pix*",
-        pixKey,
         "",
         "Caso já tenha pago, favor enviar o comprovante."
       ].join("\n");
@@ -1292,17 +1264,7 @@
       if (!document.hidden) renderOverdueAlert();
     });
 
-    if (new URLSearchParams(window.location.search).get("pix") === "1") {
-      const page = document.querySelector("#pix-page");
-      const button = page.querySelector("#copy-public-pix");
-      page.querySelector(".pix-key").value = pixKey;
-      button.addEventListener("click", () => copyPixKey(button));
-      login.hidden = true;
-      page.hidden = false;
-      document.title = "Copiar chave Pix | CredMaster";
-    } else {
-      await connect();
-    }
+    await connect();
 
     async function connect() {
       try {
