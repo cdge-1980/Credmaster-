@@ -76,7 +76,6 @@
       <button type="button" data-tab="cobrancas">Cobranças</button>
       <button type="button" data-tab="relatorios">Relatórios</button>
       <button type="button" data-tab="dados">Dados</button>
-      <button type="button" data-tab="saldos">Saldo devedor</button>
       <button type="button" data-tab="injecao">Valores em aberto Injeção MinasMolde</button>
       <button type="button" data-tab="ferramentaria">Valores em aberto Ferramentaria MinasMolde</button>
     </nav>
@@ -228,8 +227,9 @@
         view.replaceChildren();
         return;
       }
+      const selectedTab = currentTab === "saldos" ? "dados" : currentTab;
       nav.querySelectorAll("button").forEach(button => {
-        button.setAttribute("aria-pressed", String(button.dataset.tab === currentTab));
+        button.setAttribute("aria-pressed", String(button.dataset.tab === selectedTab));
       });
       const hasDraft = view.contains(document.activeElement) && document.activeElement.matches("input, select, textarea");
       if (hasDraft) return;
@@ -426,7 +426,7 @@
         const openTabs = [
           ...(loans.some(active) ? ["Empréstimos"] : []),
           ...[
-            ["saldos", "Saldo devedor"],
+            ["saldos", "Dados → Saldo devedor antigo"],
             ["injecao", "Valores em aberto Injeção MinasMolde"],
             ["ferramentaria", "Valores em aberto Ferramentaria MinasMolde"]
           ].filter(([sector]) => debtBalance(clientMovements(records, client.id, sector)) > 0)
@@ -649,7 +649,10 @@
     }
 
     function dataPage() {
-      return card("Cópias dos dados", `
+      const hasLegacyBalances = (records.movimentosSaldo ?? []).some(movement => (movement.setor ?? "saldos") === "saldos");
+      return (hasLegacyBalances
+        ? card("Saldo devedor antigo", action("Abrir saldo devedor antigo", "open-legacy-balances", 0))
+        : "") + card("Cópias dos dados", `
         <p>A cópia inclui os cadastros, empréstimos, pagamentos e o histórico de saldo devedor. Baixe os documentos na ficha de cada cliente.</p>
         ${action("Baixar cópia dos dados na nuvem", "export", 0)}
         <p>Se você usou o protótipo neste navegador, pode baixar os registros antigos separadamente.</p>
@@ -1141,6 +1144,11 @@
       }
       if (name === "export-local") return exportLocal();
       if (name === "export") return download({ dados: records }, "credmaster-nuvem");
+      if (name === "open-legacy-balances") {
+        currentTab = "saldos";
+        view.replaceChildren();
+        return render();
+      }
       if (name === "fetch-file") return handleAttachment(number, button.dataset.kind);
       if (name === "edit-received-interest" || name === "cancel-received-interest") {
         if (name === "edit-received-interest" && !editableInterestPayment(records.pagamentos[number])) return;
