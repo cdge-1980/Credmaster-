@@ -17,8 +17,10 @@
     small { opacity: .85; }
     main, #login { max-width: 680px; margin: auto; padding: 15px; }
     #login { max-width: 420px; margin-top: 18px; }
-    nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
-    nav button { font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
+    nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
+    nav button { grid-column: span 2; font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
+    nav .sector-tab { grid-column: span 3; min-height: 72px; padding: 10px 6px; }
+    .sector-tab span { display: block; }
     button { border: 0; border-radius: 10px; padding: 12px; background: #173568; color: white; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
     .secondary { background: #e7edf7; color: #173568; }
@@ -76,8 +78,16 @@
       <button type="button" data-tab="cobrancas">Cobranças</button>
       <button type="button" data-tab="relatorios">Relatórios</button>
       <button type="button" data-tab="dados">Dados</button>
-      <button type="button" data-tab="injecao">Valores em aberto Injeção MinasMolde</button>
-      <button type="button" data-tab="ferramentaria">Valores em aberto Ferramentaria MinasMolde</button>
+      <button type="button" class="sector-tab" data-tab="injecao">
+        <span>Valores em aberto</span>
+        <span>Injeção</span>
+        <span>MinasMolde</span>
+      </button>
+      <button type="button" class="sector-tab" data-tab="ferramentaria">
+        <span>Valores em aberto</span>
+        <span>Ferramentaria</span>
+        <span>MinasMolde</span>
+      </button>
     </nav>
     <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
       <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
@@ -310,18 +320,18 @@
                   ${displayDate(movement.data)} · ${movementLabels[movement.tipo]} ${movement.tipo === "entrada" ? "+" : "−"}${money(movement.valor)}
                   ${movement.observacao ? `<span class="balance-note">Observação · ${escapeHtml(movement.observacao)}</span>` : ""}
                 </li>`).join("")}</ul>
+              ${sector === "injecao" ? `<details>
+                <summary class="danger">Limpar lançamentos de Injeção</summary>
+                <form data-form="clear-injection" data-id="${client.id}" data-revision="${records.revision}">
+                  <p>Excluir definitivamente os ${movements.length} lançamento(s) de Injeção de <strong>${escapeHtml(client.nome)}</strong>?
+                    O saldo de Injeção volta a zero e o cadastro do cliente é mantido.</p>
+                  <label for="clear-injection-${client.id}">Digite LIMPAR INJEÇÃO para confirmar</label>
+                  <input id="clear-injection-${client.id}" name="confirmacao" autocomplete="off" spellcheck="false" required>
+                  <button class="red" type="submit">Confirmar limpeza</button>
+                  <p class="danger" data-clear-error role="alert"></p>
+                </form>
+              </details>` : ""}
             </details>
-            ${sector === "injecao" ? `<details>
-              <summary class="danger">Limpar lançamentos de Injeção</summary>
-              <form data-form="clear-injection" data-id="${client.id}" data-revision="${records.revision}">
-                <p>Excluir definitivamente os ${movements.length} lançamento(s) de Injeção de <strong>${escapeHtml(client.nome)}</strong>?
-                  O saldo de Injeção volta a zero e o cadastro do cliente é mantido.</p>
-                <label for="clear-injection-${client.id}">Digite LIMPAR INJEÇÃO para confirmar</label>
-                <input id="clear-injection-${client.id}" name="confirmacao" autocomplete="off" spellcheck="false" required>
-                <button class="red" type="submit">Confirmar limpeza</button>
-                <p class="danger" data-clear-error role="alert"></p>
-              </form>
-            </details>` : ""}
           </div>`)).join("");
       return entries + (clientCards || card("Saldos por cliente", "<p>Nenhum saldo lançado.</p>"));
     }
