@@ -311,6 +311,17 @@
                   ${movement.observacao ? `<span class="balance-note">Observação · ${escapeHtml(movement.observacao)}</span>` : ""}
                 </li>`).join("")}</ul>
             </details>
+            ${sector === "injecao" ? `<details>
+              <summary class="danger">Limpar lançamentos de Injeção</summary>
+              <form data-form="clear-injection" data-id="${client.id}" data-revision="${records.revision}">
+                <p>Excluir definitivamente os ${movements.length} lançamento(s) de Injeção de <strong>${escapeHtml(client.nome)}</strong>?
+                  O saldo de Injeção volta a zero e o cadastro do cliente é mantido.</p>
+                <label for="clear-injection-${client.id}">Digite LIMPAR INJEÇÃO para confirmar</label>
+                <input id="clear-injection-${client.id}" name="confirmacao" autocomplete="off" spellcheck="false" required>
+                <button class="red" type="submit">Confirmar limpeza</button>
+                <p class="danger" data-clear-error role="alert"></p>
+              </form>
+            </details>` : ""}
           </div>`)).join("");
       return entries + (clientCards || card("Saldos por cliente", "<p>Nenhum saldo lançado.</p>"));
     }
@@ -357,6 +368,26 @@
         if (observacao) movement.observacao = observacao;
         next.movimentosSaldo.push(movement);
       });
+    }
+
+    async function clearInjectionMovements(form, fields) {
+      const clientId = Number(form.dataset.id);
+      if (currentTab !== "injecao" || !records.clientes.some(client => client.id === clientId)) return;
+      if (Number(form.dataset.revision) !== records.revision) {
+        view.replaceChildren();
+        render();
+        return setStatus("Os dados mudaram. Confira o histórico de Injeção antes de tentar novamente.", true);
+      }
+      const confirmation = String(fields.get("confirmacao") ?? "").trim().toLocaleUpperCase("pt-BR");
+      if (confirmation !== "LIMPAR INJEÇÃO") {
+        form.querySelector("[data-clear-error]").textContent = "Digite LIMPAR INJEÇÃO para confirmar.";
+        return;
+      }
+      const saved = await save(next => {
+        next.movimentosSaldo = (next.movimentosSaldo ?? [])
+          .filter(movement => movement.cid !== clientId || movement.setor !== "injecao");
+      });
+      if (saved) setStatus("Lançamentos de Injeção apagados. O cliente pode receber novos lançamentos.");
     }
 
     function clients() {
@@ -862,6 +893,9 @@
       const fields = new FormData(form);
       if (form.dataset.form === "debt-entry" || form.dataset.form === "debt-payment") {
         return recordDebtMovement(form, fields);
+      }
+      if (form.dataset.form === "clear-injection") {
+        return clearInjectionMovements(form, fields);
       }
       if (form.dataset.form === "delete-client") {
         return deleteClient(Number(form.dataset.id), fields.get("confirmacao"));
