@@ -56,6 +56,9 @@
     .cash-totals div { background: #f2f5fa; border-radius: 9px; padding: 10px 7px; }
     .cash-totals dt { color: #55657a; font-size: 13px; }
     .cash-totals dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+    .cash-area-balances { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .875rem; }
+    .cash-area-balances td, .cash-area-balances th { padding: 8px 4px; border-bottom: 1px solid #e8edf4; text-align: left; overflow-wrap: anywhere; }
+    .cash-area-balances td { text-align: right; font-weight: 700; }
     .cash-history { list-style: none; margin: 12px 0 0; padding: 0; }
     .cash-history li { border-top: 1px solid #e8edf4; padding: 10px 0; }
     .cash-detail { display: flex; justify-content: space-between; gap: 8px; }
@@ -191,8 +194,9 @@
     let activeClientDelete = 0;
     let showArchivedClients = false;
     let cashMonth;
-    let cashReportArea = "empresa";
+    let cashReportArea = "";
     let cashReportType = "";
+    let cashAllMonths = true;
     let cashEntryArea = "empresa";
 
     function dueDate(start, monthOffset) {
@@ -308,30 +312,43 @@
     }
 
     function cashReport() {
-      const movements = (records.movimentosCaixa ?? []).filter(movement =>
-        movement.area === cashReportArea && movement.data.slice(0, 7) === cashMonth);
+      const periodMovements = (records.movimentosCaixa ?? []).filter(movement =>
+        cashAllMonths || movement.data.slice(0, 7) === cashMonth);
+      const movements = periodMovements.filter(movement =>
+        !cashReportArea || movement.area === cashReportArea);
       const entradas = sum(movements.filter(movement => movement.tipo === "entrada"), "valor");
       const saidas = sum(movements.filter(movement => movement.tipo === "saida"), "valor");
       const saldo = entradas - saidas;
-      const history = movements.filter(movement => !cashReportType || movement.tipo === cashReportType)
-        .reverse().sort((a, b) => b.data.localeCompare(a.data))
+      let runningBalance = 0;
+      const history = movements.sort((a, b) => a.data.localeCompare(b.data))
         .map(movement => {
           const incoming = movement.tipo === "entrada";
+          runningBalance += incoming ? movement.valor : -movement.valor;
+          if (cashReportType && movement.tipo !== cashReportType) return "";
           return `<li>
             <div class="cash-detail">
               <strong>${escapeHtml(movement.categoria)}</strong>
               <strong class="${incoming ? "good" : "danger"}">${incoming ? "+" : "−"}${money(movement.valor)}</strong>
             </div>
-            <small>${displayDate(escapeHtml(movement.data))} · ${incoming ? "Entrada" : "Saída"}</small>
+            <small>${displayDate(escapeHtml(movement.data))} · ${cashAreas[movement.area] ?? "Área não informada"} · ${incoming ? "Entrada" : "Saída"}</small>
             ${movement.observacao ? `<span class="balance-note muted">${escapeHtml(movement.observacao)}</span>` : ""}
+            <small class="balance-note">Saldo após lançamento <strong class="${runningBalance < 0 ? "danger" : "good"}">${money(runningBalance)}</strong></small>
           </li>`;
-        }).join("");
+        }).reverse().join("");
+      const areaBalances = Object.entries(cashAreas).map(([area, label]) => {
+        const balance = debtBalance(periodMovements.filter(movement => movement.area === area));
+        return `<tr><th scope="row">${label}</th><td class="${balance < 0 ? "danger" : "good"}">${money(balance)}</td></tr>`;
+      }).join("");
       return `
         <dl class="cash-totals">
-          <div><dt>Entradas do mês</dt><dd class="good">${money(entradas)}</dd></div>
-          <div><dt>Saídas do mês</dt><dd>${money(saidas)}</dd></div>
-          <div><dt>Saldo do mês</dt><dd class="${saldo < 0 ? "danger" : "good"}">${money(saldo)}</dd></div>
+          <div><dt>Entradas</dt><dd class="good">${money(entradas)}</dd></div>
+          <div><dt>Saídas</dt><dd>${money(saidas)}</dd></div>
+          <div><dt>${cashReportArea ? "Saldo da área" : "Saldo geral"}</dt><dd class="${saldo < 0 ? "danger" : "good"}">${money(saldo)}</dd></div>
         </dl>
+        <table class="cash-area-balances">
+          <caption>Saldo por área</caption>
+          <tbody>${areaBalances}</tbody>
+        </table>
         ${history ? `<ul class="cash-history">${history}</ul>`
           : '<p class="muted">Nenhum lançamento para este filtro.</p>'}`;
     }
@@ -341,11 +358,21 @@
         <div class="cash-grid">
           <div>
             <label for="cash-report-area">Relatório de</label>
-            <select id="cash-report-area">${cashAreaOptions(cashReportArea)}</select>
+            <select id="cash-report-area">
+              <option value="">Todas as áreas</option>
+              ${cashAreaOptions(cashReportArea)}
+            </select>
           </div>
           <div>
-            <label for="cash-month">Mês</label>
-            <input id="cash-month" type="month" value="${cashMonth}" required>
+            <label for="cash-period">Período</label>
+            <select id="cash-period">
+              <option value="all">Todos os meses</option>
+              <option value="month" ${cashAllMonths ? "" : "selected"}>Escolher mês</option>
+            </select>
+            <div id="cash-month-field" ${cashAllMonths ? "hidden" : ""}>
+              <label for="cash-month">Mês</label>
+              <input id="cash-month" type="month" value="${cashMonth}" required>
+            </div>
           </div>
         </div>
         <label for="cash-report-type">Exibir lançamentos</label>
@@ -404,7 +431,7 @@
       });
       if (!saved) return;
       cashEntryArea = area;
-      cashReportArea = area;
+      if (cashReportArea && cashReportArea !== area) cashReportArea = "";
       cashMonth = data.slice(0, 7);
       cashReportType = "";
       render();
@@ -953,8 +980,9 @@
       activeClientDelete = 0;
       showArchivedClients = false;
       cashMonth = today().slice(0, 7);
-      cashReportArea = "empresa";
+      cashReportArea = "";
       cashReportType = "";
+      cashAllMonths = true;
       cashEntryArea = "empresa";
       paymentLoan = 0;
       saving = false;
@@ -1056,8 +1084,12 @@
         view.querySelector("#cash-category").innerHTML = cashCategoryOptions(value);
         return;
       }
-      if (id === "cash-report-area" || id === "cash-month" || id === "cash-report-type") {
+      if (id === "cash-report-area" || id === "cash-period" || id === "cash-month" || id === "cash-report-type") {
         if (id === "cash-report-area") cashReportArea = value;
+        if (id === "cash-period") {
+          cashAllMonths = value === "all";
+          view.querySelector("#cash-month-field").hidden = cashAllMonths;
+        }
         if (id === "cash-month") {
           if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
             event.target.value = cashMonth;
