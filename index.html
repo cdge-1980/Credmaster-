@@ -19,6 +19,7 @@
     #login { max-width: 420px; margin-top: 18px; }
     nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; margin-bottom: 15px; }
     nav button { grid-column: span 2; font-size: 13px; padding: 11px 4px; overflow-wrap: anywhere; }
+    nav .cash-tab { grid-column: 1 / -1; }
     nav .sector-tab { grid-column: span 3; min-height: 72px; padding: 10px 6px; }
     .sector-tab span { display: block; }
     button { border: 0; border-radius: 10px; padding: 12px; background: #173568; color: white; font-weight: 700; cursor: pointer; }
@@ -50,6 +51,15 @@
     .balance-actions summary { cursor: pointer; font-weight: 650; }
     .balance-history { padding-inline-start: 22px; line-height: 1.6; }
     .balance-note { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+    .cash-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
+    .cash-totals div { background: #f2f5fa; border-radius: 9px; padding: 10px 7px; }
+    .cash-totals dt { color: #55657a; font-size: 13px; }
+    .cash-totals dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+    .cash-history { list-style: none; margin: 12px 0 0; padding: 0; }
+    .cash-history li { border-top: 1px solid #e8edf4; padding: 10px 0; }
+    .cash-detail { display: flex; justify-content: space-between; gap: 8px; }
+    .cash-detail strong { overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -88,6 +98,7 @@
         <span>Ferramentaria</span>
         <span>MinasMolde</span>
       </button>
+      <button type="button" class="cash-tab" data-tab="caixa">Fluxo de caixa</button>
     </nav>
     <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
       <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
@@ -158,6 +169,11 @@
       recebimento: "Pagamento recebido",
       abatimento: "Abatimento"
     };
+    const cashAreas = { empresa: "Empresa (MinasMolde)", casa: "Casa", pessoal: "Pessoal" };
+    const cashCategories = {
+      entrada: ["Vendas", "Serviços", "Salário", "Outras entradas"],
+      saida: ["Aluguel", "Água", "Luz", "Funcionários", "Gasolina", "Mercado", "Material", "Outras saídas"]
+    };
 
     let auth;
     let cloud;
@@ -174,6 +190,10 @@
     let receivedInterestEdit;
     let activeClientDelete = 0;
     let showArchivedClients = false;
+    let cashMonth;
+    let cashReportArea = "empresa";
+    let cashReportType = "";
+    let cashEntryArea = "empresa";
 
     function dueDate(start, monthOffset) {
       const [year, month, day] = start.split("-").map(Number);
@@ -246,7 +266,7 @@
       const hasDraft = view.contains(document.activeElement) && document.activeElement.matches("input, select, textarea");
       if (hasDraft) return;
       const pages = { novo: newLoan, clientes: clients, emprestimos: loans, cobrancas: charges,
-        relatorios: reports, dados: dataPage };
+        relatorios: reports, dados: dataPage, caixa: cashPage };
       view.innerHTML = Object.hasOwn(balanceTitles, currentTab) ? balances(currentTab) : pages[currentTab]();
     }
 
@@ -267,6 +287,128 @@
     function balanceNoteField(id) {
       return `<label for="${id}">Observação (opcional)</label>
         <textarea class="balance-note-input" id="${id}" name="observacao" rows="2" maxlength="500"></textarea>`;
+    }
+
+    function amountInCents(value) {
+      const input = String(value ?? "").trim();
+      const format = /^(?:\d+(?:[,.]\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)$/;
+      if (!format.test(input)) return NaN;
+      const normalized = input.replace(/\.(?=\d{3}(?:\.|,|$))/g, "").replace(",", ".");
+      return Math.round(Number(normalized) * 100);
+    }
+
+    function cashAreaOptions(selected) {
+      return Object.entries(cashAreas).map(([value, label]) =>
+        `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`).join("");
+    }
+
+    function cashCategoryOptions(type) {
+      return '<option value="">Selecione</option>' + cashCategories[type].map(category =>
+        `<option>${category}</option>`).join("");
+    }
+
+    function cashReport() {
+      const movements = (records.movimentosCaixa ?? []).filter(movement =>
+        movement.area === cashReportArea && movement.data.slice(0, 7) === cashMonth);
+      const entradas = sum(movements.filter(movement => movement.tipo === "entrada"), "valor");
+      const saidas = sum(movements.filter(movement => movement.tipo === "saida"), "valor");
+      const saldo = entradas - saidas;
+      const history = movements.filter(movement => !cashReportType || movement.tipo === cashReportType)
+        .reverse().sort((a, b) => b.data.localeCompare(a.data))
+        .map(movement => {
+          const incoming = movement.tipo === "entrada";
+          return `<li>
+            <div class="cash-detail">
+              <strong>${escapeHtml(movement.categoria)}</strong>
+              <strong class="${incoming ? "good" : "danger"}">${incoming ? "+" : "−"}${money(movement.valor)}</strong>
+            </div>
+            <small>${displayDate(escapeHtml(movement.data))} · ${incoming ? "Entrada" : "Saída"}</small>
+            ${movement.observacao ? `<span class="balance-note muted">${escapeHtml(movement.observacao)}</span>` : ""}
+          </li>`;
+        }).join("");
+      return `
+        <dl class="cash-totals">
+          <div><dt>Entradas do mês</dt><dd class="good">${money(entradas)}</dd></div>
+          <div><dt>Saídas do mês</dt><dd>${money(saidas)}</dd></div>
+          <div><dt>Saldo do mês</dt><dd class="${saldo < 0 ? "danger" : "good"}">${money(saldo)}</dd></div>
+        </dl>
+        ${history ? `<ul class="cash-history">${history}</ul>`
+          : '<p class="muted">Nenhum lançamento para este filtro.</p>'}`;
+    }
+
+    function cashPage() {
+      return card("Relatório de fluxo de caixa", `
+        <div class="cash-grid">
+          <div>
+            <label for="cash-report-area">Relatório de</label>
+            <select id="cash-report-area">${cashAreaOptions(cashReportArea)}</select>
+          </div>
+          <div>
+            <label for="cash-month">Mês</label>
+            <input id="cash-month" type="month" value="${cashMonth}" required>
+          </div>
+        </div>
+        <label for="cash-report-type">Exibir lançamentos</label>
+        <select id="cash-report-type">
+          <option value="">Entradas e saídas</option>
+          <option value="entrada" ${cashReportType === "entrada" ? "selected" : ""}>Só entradas</option>
+          <option value="saida" ${cashReportType === "saida" ? "selected" : ""}>Só saídas</option>
+        </select>
+        <div id="cash-report-results" aria-live="polite">${cashReport()}</div>`)
+        + card("Novo lançamento", `
+          <form data-form="cash-movement">
+            <div class="cash-grid">
+              <div>
+                <label for="cash-area">Área</label>
+                <select id="cash-area" name="area">${cashAreaOptions(cashEntryArea)}</select>
+              </div>
+              <div>
+                <label for="cash-type">Tipo</label>
+                <select id="cash-type" name="tipo">
+                  <option value="entrada">Entrada</option>
+                  <option value="saida">Saída</option>
+                </select>
+              </div>
+              <div>
+                <label for="cash-date">Data</label>
+                <input id="cash-date" name="data" type="date" value="${today()}" max="${today()}" required>
+              </div>
+              <div>${balanceAmountField("cash-value", "Valor")}</div>
+            </div>
+            <label for="cash-category">Categoria</label>
+            <select id="cash-category" name="categoria" required>${cashCategoryOptions("entrada")}</select>
+            ${balanceNoteField("cash-note")}
+            <button type="submit">Salvar lançamento</button>
+          </form>`);
+    }
+
+    async function recordCashMovement(fields) {
+      const { area, tipo, data, categoria } = Object.fromEntries(fields);
+      const valor = amountInCents(fields.get("valor"));
+      const observacao = String(fields.get("observacao") ?? "").trim();
+      if (!Object.hasOwn(cashAreas, area) || !Object.hasOwn(cashCategories, tipo)
+          || !cashCategories[tipo].includes(categoria)) {
+        return setStatus("Confira a área, o tipo e a categoria.", true);
+      }
+      if (!validPrincipal(valor)) {
+        return setStatus("Informe um valor maior que zero, com até duas casas decimais.", true);
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data) || data > today()
+          || new Date(data).toJSON()?.slice(0, 10) !== data) {
+        return setStatus("Informe uma data válida, até hoje.", true);
+      }
+      if (observacao.length > 500) return setStatus("A observação deve ter até 500 caracteres.", true);
+      const saved = await save(next => {
+        next.movimentosCaixa ??= [];
+        next.movimentosCaixa.push({ area, tipo, data, categoria, valor, observacao });
+      });
+      if (!saved) return;
+      cashEntryArea = area;
+      cashReportArea = area;
+      cashMonth = data.slice(0, 7);
+      cashReportType = "";
+      render();
+      setStatus("Lançamento salvo no fluxo de caixa.");
     }
 
     function balances(sector) {
@@ -349,11 +491,8 @@
       const nome = newClient ? fields.get("nome").trim() : "";
       const observacao = String(fields.get("observacao") ?? "").trim();
       if (observacao.length > 500) return setStatus("A observação deve ter até 500 caracteres.", true);
-      const input = String(fields.get("valor")).trim();
-      const normalized = input.replace(/\.(?=\d{3}(?:\.|,|$))/g, "").replace(",", ".");
-      const valor = Math.round(Number(normalized) * 100);
-      const format = /^(?:\d+(?:[,.]\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)$/;
-      if (!format.test(input) || !validPrincipal(valor)) {
+      const valor = amountInCents(fields.get("valor"));
+      if (!validPrincipal(valor)) {
         return setStatus("Informe um valor maior que zero, com até duas casas decimais.", true);
       }
       const client = records.clientes.find(item => item.id === clientId);
@@ -681,7 +820,7 @@
       return (hasLegacyBalances
         ? card("Saldo devedor antigo", action("Abrir saldo devedor antigo", "open-legacy-balances", 0))
         : "") + card("Cópias dos dados", `
-        <p>A cópia inclui os cadastros, empréstimos, pagamentos e o histórico de saldo devedor. Baixe os documentos na ficha de cada cliente.</p>
+        <p>A cópia inclui os cadastros, empréstimos, pagamentos, o histórico de saldo devedor e o fluxo de caixa. Baixe os documentos na ficha de cada cliente.</p>
         ${action("Baixar cópia dos dados na nuvem", "export", 0)}
         <p>Se você usou o protótipo neste navegador, pode baixar os registros antigos separadamente.</p>
         ${action("Baixar dados do protótipo", "export-local", 0)}
@@ -813,6 +952,10 @@
       activeClientEdit = 0;
       activeClientDelete = 0;
       showArchivedClients = false;
+      cashMonth = today().slice(0, 7);
+      cashReportArea = "empresa";
+      cashReportType = "";
+      cashEntryArea = "empresa";
       paymentLoan = 0;
       saving = false;
       const authorized = user?.uid === ownerUid;
@@ -908,6 +1051,24 @@
     }
 
     view.addEventListener("change", event => {
+      const { id, value } = event.target;
+      if (id === "cash-type") {
+        view.querySelector("#cash-category").innerHTML = cashCategoryOptions(value);
+        return;
+      }
+      if (id === "cash-report-area" || id === "cash-month" || id === "cash-report-type") {
+        if (id === "cash-report-area") cashReportArea = value;
+        if (id === "cash-month") {
+          if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+            event.target.value = cashMonth;
+            return;
+          }
+          cashMonth = value;
+        }
+        if (id === "cash-report-type") cashReportType = value;
+        view.querySelector("#cash-report-results").innerHTML = cashReport();
+        return;
+      }
       if (event.target.id !== "debt-client") return;
       const section = view.querySelector("#debt-new-client");
       const nameInput = view.querySelector("#debt-name");
@@ -923,6 +1084,7 @@
       event.preventDefault();
       if (!records || saving) return;
       const fields = new FormData(form);
+      if (form.dataset.form === "cash-movement") return recordCashMovement(fields);
       if (form.dataset.form === "debt-entry" || form.dataset.form === "debt-payment") {
         return recordDebtMovement(form, fields);
       }
@@ -1522,7 +1684,11 @@
               transaction.delete(manifest);
             }
           }
-          const cleared = { ...emptyState(), revision: latest.revision + 1 };
+          const cleared = {
+            ...emptyState(),
+            movimentosCaixa: latest.movimentosCaixa ?? [],
+            revision: latest.revision + 1
+          };
           transaction.set(current.ref, cleared);
           return cleared;
         });
