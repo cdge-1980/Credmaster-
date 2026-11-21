@@ -58,7 +58,8 @@
     .cash-totals dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
     .cash-area-balances { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .875rem; }
     .cash-area-balances td, .cash-area-balances th { padding: 8px 4px; border-bottom: 1px solid #e8edf4; text-align: left; overflow-wrap: anywhere; }
-    .cash-area-balances td { text-align: right; font-weight: 700; }
+    .cash-area-balances td, .cash-area-balances th[scope="col"] { text-align: right; font-weight: 700; }
+    .cash-area-balances th:first-child { text-align: left; }
     .cash-history { list-style: none; margin: 12px 0 0; padding: 0; }
     .cash-history li { border-top: 1px solid #e8edf4; padding: 10px 0; }
     .cash-detail { display: flex; justify-content: space-between; gap: 8px; }
@@ -335,9 +336,15 @@
             <small class="balance-note">Saldo após lançamento <strong class="${runningBalance < 0 ? "danger" : "good"}">${money(runningBalance)}</strong></small>
           </li>`;
         }).reverse().join("");
-      const areaBalances = Object.entries(cashAreas).map(([area, label]) => {
-        const balance = debtBalance(periodMovements.filter(movement => movement.area === area));
-        return `<tr><th scope="row">${label}</th><td class="${balance < 0 ? "danger" : "good"}">${money(balance)}</td></tr>`;
+      const areaRows = Object.entries(cashAreas).map(([area, label]) => {
+        const areaMovements = periodMovements.filter(movement => movement.area === area);
+        const expenses = sum(areaMovements.filter(movement => movement.tipo === "saida"), "valor");
+        const balance = debtBalance(areaMovements);
+        return `<tr>
+          <th scope="row">${label}</th>
+          <td class="${expenses ? "danger" : ""}">${money(expenses)}</td>
+          <td class="${balance < 0 ? "danger" : "good"}">${money(balance)}</td>
+        </tr>`;
       }).join("");
       return `
         <dl class="cash-totals">
@@ -346,8 +353,9 @@
           <div><dt>${cashReportArea ? "Saldo da área" : "Saldo geral"}</dt><dd class="${saldo < 0 ? "danger" : "good"}">${money(saldo)}</dd></div>
         </dl>
         <table class="cash-area-balances">
-          <caption>Saldo por área</caption>
-          <tbody>${areaBalances}</tbody>
+          <caption>Resumo por área</caption>
+          <thead><tr><th scope="col">Área</th><th scope="col">Saídas</th><th scope="col">Saldo</th></tr></thead>
+          <tbody>${areaRows}</tbody>
         </table>
         ${history ? `<ul class="cash-history">${history}</ul>`
           : '<p class="muted">Nenhum lançamento para este filtro.</p>'}`;
