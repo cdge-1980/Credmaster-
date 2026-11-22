@@ -1,44 +1,9 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ficha cadastral | CredMaster</title>
-<style>
-*{box-sizing:border-box}body{margin:0;background:#f2f5fa;color:#15223a;font:16px system-ui,Arial}header{background:#173568;color:white;padding:22px 18px;text-align:center}header h1{margin:0}main{max-width:650px;margin:18px auto;padding:0 14px}.card{background:white;border-radius:14px;padding:20px;box-shadow:0 2px 12px #142b4d18}h2{font-size:19px;color:#173568;margin-top:26px}label{display:block;font-weight:650;margin:13px 0 5px}input,select{width:100%;padding:12px;border:1px solid #bfc9d9;border-radius:9px;font:inherit}button{border:0;border-radius:10px;background:#173568;color:white;padding:14px;font:inherit;font-weight:700;width:100%;margin-top:20px}button:disabled{opacity:.55}.note{color:#52637a;font-size:14px;line-height:1.5}.warning{background:#fff3e1;border:1px solid #e9bf7e;padding:12px;border-radius:9px}.check{display:flex;gap:9px;align-items:flex-start}.check input{width:auto;margin-top:5px}.check label{margin:0;font-weight:400}
-</style>
-</head>
-<body>
-<header><h1>CredMaster</h1><div>Ficha de solicitação cadastral</div></header>
-<main><section class="card">
-<p class="note">Preencha os dados para análise. O envio não garante aprovação de crédito.</p>
-<p class="warning"><strong>Formulário em preparação.</strong> O envio seguro ainda não foi configurado. Não informe dados reais nem anexe documentos nesta versão.</p>
-<form id="cadastro">
-<h2>Dados pessoais</h2>
-<label for="nome">Nome completo *</label><input id="nome" name="nome" autocomplete="name" required maxlength="120">
-<label for="cpf">CPF *</label><input id="cpf" name="cpf" inputmode="numeric" required maxlength="14">
-<label for="nascimento">Data de nascimento *</label><input id="nascimento" name="nascimento" type="date" required>
-<label for="telefone">Telefone / WhatsApp *</label><input id="telefone" name="telefone" type="tel" autocomplete="tel" required maxlength="20">
-<h2>Endereço</h2>
-<label for="endereco">Rua, número e complemento *</label><input id="endereco" name="endereco" autocomplete="street-address" required maxlength="250">
-<label for="bairro">Bairro *</label><input id="bairro" name="bairro" required maxlength="100">
-<label for="cidade">Cidade / Estado *</label><input id="cidade" name="cidade" required maxlength="120">
-<label for="cep">CEP *</label><input id="cep" name="cep" inputmode="numeric" required maxlength="9">
-<h2>Trabalho e renda</h2>
-<label for="situacao">Situação profissional *</label><select id="situacao" name="situacao" required><option value="">Selecione</option><option>Empregado com carteira assinada</option><option>Autônomo</option><option>Empresário</option><option>Aposentado / pensionista</option><option>Desempregado</option><option>Outro</option></select>
-<label for="empresa">Empresa onde trabalha (se aplicável)</label><input id="empresa" name="empresa" maxlength="150">
-<label for="profissao">Profissão / função *</label><input id="profissao" name="profissao" required maxlength="120">
-<label for="renda">Renda mensal aproximada (R$) *</label><input id="renda" name="renda" inputmode="decimal" required maxlength="18">
-<h2>Avalista</h2>
-<label for="avalista">Nome completo do avalista *</label><input id="avalista" name="avalista" required maxlength="120">
-<label for="avalistaTelefone">Telefone / WhatsApp do avalista *</label><input id="avalistaTelefone" name="avalistaTelefone" type="tel" required maxlength="20">
-<p class="note">A indicação de avalista não significa que ele aceitou assumir qualquer obrigação. Isso exige confirmação e formalização próprias.</p>
-<h2>Documentos</h2>
-<label for="documento">Foto do documento (frente e verso, em arquivos separados)</label><input id="documento" type="file" accept="image/jpeg,image/png,application/pdf" multiple disabled>
-<label for="comprovante">Comprovante de endereço</label><input id="comprovante" type="file" accept="image/jpeg,image/png,application/pdf" disabled>
-<label for="rendaArquivo">Contracheque ou comprovante de renda</label><input id="rendaArquivo" type="file" accept="image/jpeg,image/png,application/pdf" disabled>
-<p class="note">Os anexos serão habilitados após configurar o armazenamento privado e as regras de segurança.</p>
-<div class="check"><input id="consentimento" type="checkbox" disabled><label for="consentimento">Declaro que os dados informados são verdadeiros e que li o aviso de privacidade, a ser disponibilizado antes do lançamento.</label></div>
-<button type="button" disabled>Enviar cadastro (aguardando configuração segura)</button>
-</form>
-</section></main>
-</body></html>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cadastro | CredMaster</title><style>*{box-sizing:border-box}body{margin:0;background:#f2f5fa;color:#15223a;font:16px system-ui,Arial}header{background:#173568;color:white;padding:22px;text-align:center}main{max-width:650px;margin:18px auto;padding:14px}.card{background:white;padding:22px;border-radius:14px}label{display:block;font-weight:650;margin:14px 0 5px}input,select{width:100%;padding:12px;border:1px solid #bbc6d8;border-radius:8px;font:inherit}h2{color:#173568;margin-top:24px}button{background:#173568;color:white;border:0;border-radius:10px;padding:15px;width:100%;margin-top:20px;font-weight:700}button:disabled{opacity:.5}.note{font-size:14px;line-height:1.5}.check{display:flex;gap:8px;margin-top:20px}.check input{width:auto}#msg{font-weight:700}</style></head><body><header><h1>CredMaster</h1>Solicitação de cadastro</header><main><div class="card"><p>Preencha os dados para análise. O envio não garante aprovação de crédito.</p><form id="form"><h2>Dados pessoais</h2><label>Nome completo *</label><input name="nome" maxlength="120" required><label>CPF *</label><input name="cpf" maxlength="14" inputmode="numeric" required><label>Data de nascimento *</label><input name="nascimento" type="date" required><label>Telefone / WhatsApp *</label><input name="telefone" maxlength="20" required><h2>Endereço</h2><label>Rua, número e complemento *</label><input name="endereco" maxlength="250" required><label>Bairro *</label><input name="bairro" maxlength="100" required><label>Cidade / Estado *</label><input name="cidade" maxlength="120" required><label>CEP *</label><input name="cep" maxlength="9" required><h2>Trabalho e renda</h2><label>Situação profissional *</label><select name="situacao" required><option value="">Selecione</option><option>Empregado com carteira assinada</option><option>Autônomo</option><option>Empresário</option><option>Aposentado / pensionista</option><option>Desempregado</option><option>Outro</option></select><label>Empresa onde trabalha</label><input name="empresa" maxlength="150"><label>Profissão / função *</label><input name="profissao" maxlength="120" required><label>Renda mensal aproximada (R$) *</label><input name="renda" maxlength="18" required><h2>Avalista</h2><label>Nome completo do avalista *</label><input name="avalistaNome" maxlength="120" required><label>Telefone do avalista *</label><input name="avalistaTelefone" maxlength="20" required><p class="note">Indicar um avalista não cria obrigação para ele. É necessária confirmação separada.</p><h2>Privacidade</h2><p class="note">Os dados serão usados exclusivamente para análise da solicitação de cadastro e eventual concessão de crédito pelo responsável do CredMaster. O acesso às solicitações é restrito ao administrador. Não envie fotos ou documentos nesta etapa. Para solicitar informações sobre seus dados, entre em contato com a pessoa que lhe enviou este formulário.</p><div class="check"><input type="checkbox" id="aceito" required><label for="aceito">Li o aviso de privacidade e solicito a análise dos dados informados.</label></div><button id="enviar" disabled>Preparando conexão...</button><p id="msg" role="status"></p></form></div></main><script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js';
+import {getAuth,signInAnonymously} from 'https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js';
+import {getFirestore,collection,addDoc,serverTimestamp} from 'https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js';
+const config={apiKey:'AIzaSyBABu6lN9Mwr5gizgXEA5WCMkXgcPD0YZY',authDomain:'credmaster-476d5.firebaseapp.com',projectId:'credmaster-476d5',appId:'1:115740048120:web:542f876e634cff2861990d'};
+const form=document.querySelector('#form'),btn=document.querySelector('#enviar'),msg=document.querySelector('#msg');let db,auth;
+try{const app=initializeApp(config);db=getFirestore(app);auth=getAuth(app);await signInAnonymously(auth);btn.disabled=false;btn.textContent='Enviar solicitação';}catch(e){msg.textContent='Não foi possível conectar. Tente novamente mais tarde.';}
+form.addEventListener('submit',async e=>{e.preventDefault();if(!auth?.currentUser)return;const f=Object.fromEntries(new FormData(form).entries());const cpf=f.cpf.replace(/\D/g,'');const cep=f.cep.replace(/\D/g,'');if(!/^\d{11}$/.test(cpf)||!/^\d{8}$/.test(cep)){msg.textContent='Confira CPF e CEP.';return;}btn.disabled=true;msg.textContent='Enviando...';try{await addDoc(collection(db,'solicitacoes_cadastro'),{...f,cpf,cep,status:'pendente',criadoEm:serverTimestamp(),autorUid:auth.currentUser.uid});form.reset();msg.textContent='Solicitação enviada com sucesso! Aguarde a análise.';}catch(err){msg.textContent='Envio não confirmado. Não repita antes de conferir com o responsável.';}finally{btn.disabled=false;}});
+</script></body></html>
