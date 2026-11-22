@@ -92,7 +92,7 @@
       <button type="button" data-tab="cobrancas">Cobranças</button>
       <button type="button" data-tab="relatorios">Relatórios</button>
       <button type="button" data-tab="dados">Dados</button>
-      <button type="button" onclick="location.href='./aprovacoes.html'">Aprovações de clientes</button>
+      
       <button type="button" class="sector-tab" data-tab="injecao">
         <span>Valores em aberto</span>
         <span>Injeção</span>
@@ -103,7 +103,16 @@
         <span>Ferramentaria</span>
         <span>MinasMolde</span>
       </button>
-      <button type="button" class="cash-tab" data-tab="caixa">Fluxo de caixa</button>
+      <button type="button" class="cash-tab"
+style="grid-column: span 3;"
+onclick="location.href='./aprovacoes.html'">
+Aprovações de clientes
+</button>
+<button type="button" class="cash-tab"
+style="grid-column: span 3;"
+data-tab="caixa">
+Fluxo de caixa
+</button>
     </nav>
     <section id="overdue-alert" aria-labelledby="overdue-title" hidden>
       <h2 id="overdue-title">Atenção: cobranças em atraso</h2>
