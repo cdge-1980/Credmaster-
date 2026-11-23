@@ -1569,7 +1569,9 @@ Fluxo de caixa
           import(sdk + "firebase-firestore.js")
         ]);
         const app = appSdk.initializeApp(config);
+        
 auth = { ...authSdk, instance: authSdk.initializeAuth(app, { persistence: authSdk.browserLocalPersistence }) };
+
         cloud = { ...firestoreSdk, instance: firestoreSdk.getFirestore(app) };
         auth.onAuthStateChanged(auth.instance, startSession, () => {
           startSession(null);
